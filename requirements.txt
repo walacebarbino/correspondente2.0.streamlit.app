@@ -1,0 +1,5 @@
+streamlit
+pytesseract
+pandas
+Pillow
+openpyxl
