@@ -5,60 +5,70 @@ from PIL import Image
 import re
 from pdf2image import convert_from_bytes
 
-# 1. Mudança de Nome conforme solicitado
 st.set_page_config(page_title="Parceria - Correspondente 2.0", layout="wide")
 st.title("🏦 Parceria - Correspondente 2.0")
-st.subheader("Análise de Conformidade e Extração Automática")
 
-def analisar_regras_caixa(dados):
-    """Função para verificar inconformidades com regras da Caixa"""
-    alertas = []
+def extrair_campos_avancados(texto):
+    """Refina a busca de campos específicos usando padrões contextuais"""
+    dados = {}
     
-    # Exemplo Regra MCMV (Faixa 3 - teto de 8k)
-    try:
-        valor_renda = float(dados['Renda'].replace('R$', '').replace('.', '').replace(',', '.').strip())
-        if valor_renda > 8000:
-            alertas.append("⚠️ Renda acima do limite para MCMV (Faixa 3).")
-    except:
-        pass
-
-    # Exemplo Regra de Documentação
-    if dados['CPF'] == "Não encontrado":
-        alertas.append("❌ CPF não identificado ou ilegível.")
+    # 1. Identificação Pessoal
+    dados['CPF'] = re.search(r'\d{3}\.\d{3}\.\d{3}-\d{2}', texto).group() if re.search(r'\d{3}\.\d{3}\.\d{3}-\d{2}', texto) else "Não encontrado"
+    dados['RG'] = re.search(r'RG[:\s]*([\d\.Xx-]+)', texto, re.I).group(1) if re.search(r'RG[:\s]*([\d\.Xx-]+)', texto, re.I) else "Não encontrado"
+    dados['Data Nascimento'] = re.search(r'(\d{2}/\d{2}/\d{4})', texto).group(1) if re.search(r'(\d{2}/\d{2}/\d{4})', texto) else "Não encontrado"
     
-    return " | ".join(alertas) if alertas else "✅ Em conformidade inicial"
+    # 2. Dados da CNH
+    cnh_num = re.search(r'REGISTRO[:\s]*(\d{11})', texto, re.I)
+    dados['Nº CNH'] = cnh_num.group(1) if cnh_num else "Não encontrado"
 
-arquivos = st.file_uploader("Suba Documentos (PDF, JPG, PNG)", accept_multiple_files=True)
+    # 3. Endereço e CEP
+    cep = re.search(r'(\d{5}-\d{3})', texto)
+    dados['CEP'] = cep.group(1) if cep else "Não encontrado"
+    # Procura rua (geralmente após RUA, AV, DR)
+    rua = re.search(r'(?:RUA|AV|AVENIDA|DR|RODOVIA)[:\s]+([A-Z0-9\s,.-]+)', texto, re.I)
+    dados['Endereço'] = rua.group(0).strip() if rua else "Não encontrado"
+
+    # 4. Dados do Contra-Cheque (Trabalho)
+    # Procura data de admissão perto da palavra 'Admissão'
+    adm = re.search(r'(?:Admissão|ADM)[:\s]+(\d{2}/\d{2}/\d{4})', texto, re.I)
+    dados['Data Admissão'] = adm.group(1) if adm else "Não encontrado"
+    
+    # Cargo (procura após a palavra 'Cargo')
+    cargo = re.search(r'Cargo[:\s]+([A-Z\s-]+)', texto, re.I)
+    dados['Cargo'] = cargo.group(1).strip() if cargo else "Não encontrado"
+    
+    # Empresa e CNPJ
+    cnpj = re.search(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}', texto)
+    dados['CNPJ Empresa'] = cnpj.group() if cnpj else "Não encontrado"
+    
+    # 5. Assinaturas e Outros
+    dados['Assinatura Detectada'] = "Sim" if "assinatura" in texto.lower() or "assinado" in texto.lower() else "Não detectada"
+
+    return dados
+
+# --- Interface ---
+arquivos = st.file_uploader("Upload de Documentos", accept_multiple_files=True)
 
 if arquivos:
-    lista_resultados = []
+    resultados = []
     for arq in arquivos:
-        # Lógica para aceitar PDF e Imagem
         if arq.type == "application/pdf":
             paginas = convert_from_bytes(arq.read())
-            img = paginas[0] # Analisa a primeira página
+            img = paginas[0]
         else:
             img = Image.open(arq)
         
-        texto = pytesseract.image_to_string(img, lang='por')
+        texto_bruto = pytesseract.image_to_string(img, lang='por')
         
-        # Extração
-        cpf = re.search(r'\d{3}\.\d{3}\.\d{3}-\d{2}', texto)
-        renda = re.search(r'R\$\s?\d{1,3}(\.\d{3})*,\d{2}', texto)
-        
-        dados_extraidos = {
-            "Arquivo": arq.name,
-            "CPF": cpf.group() if cpf else "Não encontrado",
-            "Renda": renda.group() if renda else "Não encontrado"
-        }
-        
-        # Inserindo a inteligência de análise
-        dados_extraidos["Análise de Regras"] = analisar_regras_caixa(dados_extraidos)
-        lista_resultados.append(dados_extraidos)
+        # Processa os campos
+        campos = extrair_campos_avancados(texto_bruto)
+        campos['Arquivo'] = arq.name
+        resultados.append(campos)
 
-    df = pd.DataFrame(lista_resultados)
-    st.dataframe(df, use_container_width=True)
+    df = pd.DataFrame(resultados)
+    st.write("### Análise de Dados Extraídos")
+    st.dataframe(df)
     
-    # Botão de Exportação
-    df.to_excel("analise_caixa.xlsx", index=False)
-    st.download_button("📥 Baixar Relatório de Inconformidades", open("analise_caixa.xlsx", "rb"), file_name="analise.xlsx")
+    # Exportação
+    df.to_excel("relatorio_completo.xlsx", index=False)
+    st.download_button("📥 Baixar Relatório Completo", open("relatorio_completo.xlsx", "rb"), file_name="analise_detalhada.xlsx")
