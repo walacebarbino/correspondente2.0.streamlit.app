@@ -5,131 +5,149 @@ from PIL import Image, ImageOps, ImageEnhance
 import re
 from pdf2image import convert_from_bytes
 from datetime import datetime
+from dateutil.relativedelta import relativedelta
 from io import BytesIO
 
-# Configuração de Página
-st.set_page_config(page_title="Relatório de Viabilidade Caixa", layout="wide")
-st.title("🏦 Relatório de Viabilidade: Correspondente Caixa")
+st.set_page_config(page_title="Correspondente 2.0", layout="wide")
+st.title("🏦 Correspondente 2.0: Analista de Crédito Caixa")
 
-# --- LÓGICA DE SUBSÍDIO E ENQUADRAMENTO (REGRAS ATUAIS) ---
-def calcular_subsidio_mcmv(renda_bruta):
-    """Calcula o subsídio máximo teórico baseado na Faixa de Renda (2025/2026)"""
-    if renda_bruta <= 2850.00:
-        return "Faixa 1", 55000.00, "Juros: 4% a 4.5% | Subsídio Máximo"
-    elif 2850.01 <= renda_bruta <= 4700.00:
-        return "Faixa 2", 55000.00, "Juros: 4.5% a 6% | Subsídio Regressivo"
-    elif 4700.01 <= renda_bruta <= 8000.00:
-        return "Faixa 3", 0.0, "Sem subsídio | Juros: 7.16% a 8.16% (FGTS)"
+# --- MOTOR DE TRATAMENTO DE IMAGEM ---
+def tratar_imagem(img):
+    img = ImageOps.grayscale(img)
+    return ImageEnhance.Contrast(img).enhance(2.5)
+
+# --- LÓGICA DE SUBSÍDIO E REGRAS CAIXA (2026) ---
+def calcular_regras_caixa(bruto, liquido):
+    # Enquadramento por Renda Bruta
+    if bruto <= 2850.00:
+        faixa, subsidio, taxa = "Faixa 1", 55000.00, "4.00% a 4.50%"
+    elif bruto <= 4700.00:
+        faixa, subsidio, taxa = "Faixa 2", 55000.00, "4.50% a 6.00%"
+    elif bruto <= 8000.00:
+        faixa, subsidio, taxa = "Faixa 3", 0.0, "7.16% a 8.16%"
     else:
-        return "SBPE", 0.0, "Linha de Mercado | Juros: TR + 9% a 10% aprox."
+        faixa, subsidio, taxa = "SBPE", 0.0, "9.00% + TR"
+    
+    # Capacidade de Pagamento (30% do Líquido)
+    capacidade = liquido * 0.30
+    
+    return {
+        "Faixa": faixa,
+        "Subsidio_Max": subsidio,
+        "Taxa_Juros": taxa,
+        "Capacidade_Mensal": capacidade
+    }
 
-# --- MOTOR DE EXTRAÇÃO REFINADO (FOCO EM PRECISÃO) ---
-def extrair_dados_tecnicos(texto_bruto):
-    t = texto_bruto.upper()
+# --- MOTOR DE EXTRAÇÃO DE DADOS ---
+def analisar_documentos(texto_total):
+    t = texto_total.upper()
     d = {}
     
-    # Identificação
-    nome = re.search(r'(?:NOME|CLIENTE|COLABORADOR)[:\s\n]+([A-Z\s]{10,})', t)
-    d['Nome'] = nome.group(1).split('\n')[0].strip() if nome else "NÃO IDENTIFICADO"
-    
-    cpf = re.search(r'\d{3}\.\d{3}\.\d{3}-\d{2}', t)
-    d['CPF'] = cpf.group() if cpf else "NÃO IDENTIFICADO"
+    # 1. IDENTIFICAÇÃO
+    d['Nome'] = (re.search(r'(?:NOME|CLIENTE|COLABORADOR)[:\s\n]+([A-Z\s]{10,})', t).group(1).split('\n')[0].strip() 
+                 if re.search(r'(?:NOME|CLIENTE|COLABORADOR)[:\s\n]+([A-Z\s]{10,})', t) else "N/A")
+    d['CPF'] = re.search(r'\d{3}\.\d{3}\.\d{3}-\d{2}', t).group() if re.search(r'\d{3}\.\d{3}\.\d{3}-\d{2}', t) else "N/A"
+    d['RG_CNH'] = re.search(r'(?:\d[\d\.]{6,12}-\d|RG\s\d{7,10}|CNH\s\d{10,12})', t).group() if re.search(r'(?:\d[\d\.]{6,12}-\d|RG\s\d{7,10}|CNH\s\d{10,12})', t) else "N/A"
+    d['Estado_Civil'] = re.search(r'\b(SOLTEIRO|CASADO|DIVORCIADO|VIÚVO|UNIÃO ESTÁVEL)\b', t).group(1) if re.search(r'\b(SOLTEIRO|CASADO|DIVORCIADO|VIÚVO|UNIÃO ESTÁVEL)\b', t) else "N/A"
+    d['Nascimento'] = re.search(r'(?:NASCIMENTO|NASC)[:\s]*(\d{2}/\d{2}/\d{4})', t).group(1) if re.search(r'(?:NASCIMENTO|NASC)[:\s]*(\d{2}/\d{2}/\d{4})', t) else "N/A"
 
-    est_civil = re.search(r'\b(SOLTEIRO|CASADO|DIVORCIADO|VIÚVO|UNIÃO ESTÁVEL|SOLTEIRA|CASADA|DIVORCIADA|VIÚVA)\b', t)
-    d['Estado Civil'] = est_civil.group(1) if est_civil else "NÃO IDENTIFICADO"
+    # 2. RESIDÊNCIA
+    d['CEP'] = re.search(r'(\d{5}-\d{3})', t).group(1) if re.search(r'(\d{5}-\d{3})', t) else "N/A"
+    end_match = re.search(r'(?:RUA|AV|LOGRADOURO)[:\s]+([^,]+,[^,]+,[^,]+,[^,]+)', t)
+    d['Endereco'] = end_match.group(1).strip() if end_match else "NÃO IDENTIFICADO"
 
-    # Residência (CEP e Endereço)
-    cep = re.search(r'(?:CEP)[:\s]*(\d{5}-\d{3})|(\d{5}-\d{3})', t)
-    d['CEP'] = cep.group(0) if cep else "NÃO IDENTIFICADO"
+    # 3. RENDA (Lógica de Adiantamento)
+    bruto_vals = re.findall(r'(?:VENCIMENTOS|PROVENTOS|VALOR BRUTO)[:\s]*R?\$?\s?(\d{1,3}(?:\.\d{3})*,\d{2})', t)
+    liq_vals = re.findall(r'(?:LÍQUIDO|VALOR LÍQUIDO)[:\s]*R?\$?\s?(\d{1,3}(?:\.\d{3})*,\d{2})', t)
+    adiantamento = re.findall(r'(?:ADIANTAMENTO|VALOR ADIANT)[:\s]*R?\$?\s?(\d{1,3}(?:\.\d{3})*,\d{2})', t)
     
-    # Financeiro (Bruto, Descontos, Líquido)
-    bruto = re.findall(r'(?:BRUTO|VENCIMENTOS|TOTAL PROVENTOS)[:\s]*R?\$?\s?(\d{1,3}(?:\.\d{3})*,\d{2})', t)
-    desc = re.findall(r'(?:DESCONTOS|TOTAL DESCONTOS)[:\s]*R?\$?\s?(\d{1,3}(?:\.\d{3})*,\d{2})', t)
-    liq = re.findall(r'(?:LÍQUIDO|VALOR RECEBIDO|PAGAMENTO)[:\s]*R?\$?\s?(\d{1,3}(?:\.\d{3})*,\d{2})', t)
+    val_bruto = float(bruto_vals[0].replace('.','').replace(',','.')) if bruto_vals else 0.0
+    val_liq = float(liq_vals[-1].replace('.','').replace(',','.')) if liq_vals else 0.0
+    val_adiant = float(adiantamento[0].replace('.','').replace(',','.')) if adiantamento else 0.0
+    
+    d['Bruto'] = val_bruto
+    d['Liquido_Ajustado'] = val_liq + val_adiant
 
-    d['Bruto_Val'] = float(bruto[0].replace('.','').replace(',','.')) if bruto else 0.0
-    d['Desc_Val'] = float(desc[0].replace('.','').replace(',','.')) if desc else 0.0
-    d['Liq_Val'] = float(liq[-1].replace('.','').replace(',','.')) if liq else 0.0
-    
-    # FGTS e Vínculo
-    fgts = re.findall(r'(?:SALDO FGTS|FGTS)[:\s]*R?\$?\s?(\d{1,3}(?:\.\d{3})*,\d{2})', t)
-    d['FGTS_Val'] = float(fgts[0].replace('.','').replace(',','.')) if fgts else 0.0
-    
-    adm = re.search(r'(?:ADMISSÃO|ADM)[:\s]*(\d{2}/\d{2}/\d{4})', t)
-    d['Admissao'] = adm.group(1) if adm else "N/A"
+    # TEMPO DE CASA
+    adm_match = re.search(r'(?:ADMISSÃO|ADM)[:\s]*(\d{2}/\d{2}/\d{4})', t)
+    if adm_match:
+        dt_adm = datetime.strptime(adm_match.group(1), '%d/%m/%Y')
+        diff = relativedelta(datetime.now(), dt_adm)
+        d['Tempo_Casa'] = f"{diff.years} anos, {diff.months} meses e {diff.days} dias"
+    else: d['Tempo_Casa'] = "N/A"
+
+    # 4. FGTS
+    contas_fgts = re.findall(r'(?:SALDO DO FGTS|SALDO DISPONÍVEL)[:\s]*R?\$?\s?(\d{1,3}(?:\.\d{3})*,\d{2})', t)
+    saldos = [float(v.replace('.','').replace(',','.')) for v in contas_fgts]
+    d['FGTS_Individual'] = saldos
+    d['FGTS_Total'] = sum(saldos)
 
     return d
 
-# --- INTERFACE E PROCESSAMENTO ---
-upload = st.file_uploader("📂 Importar Dossier do Cliente (PDF/Imagens)", accept_multiple_files=True)
+# --- INTERFACE ---
+st.subheader("📁 Importação de Dossier")
+upload = st.file_uploader("Arraste os documentos (PDF/Imagens)", accept_multiple_files=True)
 
 if upload:
     full_text = ""
-    status_docs = []
+    docs_status = []
     for f in upload:
         if f.type == "application/pdf":
             paginas = convert_from_bytes(f.read())
-            for p in paginas:
-                img = ImageOps.grayscale(p)
-                full_text += pytesseract.image_to_string(img, lang='por')
+            for p in paginas: full_text += pytesseract.image_to_string(tratar_imagem(p), lang='por')
         else:
-            img = ImageOps.grayscale(Image.open(f))
-            full_text += pytesseract.image_to_string(img, lang='por')
-        status_docs.append({"Documento": f.name, "Análise": "Concluída ✅"})
+            full_text += pytesseract.image_to_string(tratar_imagem(Image.open(f)), lang='por')
+        docs_status.append({"Arquivo": f.name, "Análise": "✅ Concluída"})
 
-    # 1. Lista de Documentos e Checklist
-    st.subheader("📑 Documentos Processados")
-    st.table(status_docs)
+    st.table(docs_status)
 
     if full_text:
-        res = extrair_dados_tecnicos(full_text)
-        faixa, valor_sub, detalhes = calcular_subsidio_mcmv(res['Bruto_Val'])
+        res = analisar_documentos(full_text)
+        caixa = calcular_regras_caixa(res['Bruto'], res['Liquido_Ajustado'])
 
+        # --- RELATÓRIO MACRO ---
         st.divider()
+        st.header("📋 Relatório Macro de Viabilidade")
 
-        # 2. Relatório de Identificação [Pilar 1 e 2]
-        st.subheader("👤 Identificação e Residência")
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns(2)
         with c1:
+            st.markdown("### 1. Identificação")
             st.write(f"**Nome:** {res['Nome']}")
-            st.write(f"**CPF:** {res['CPF']}")
-        with c2:
-            st.write(f"**Estado Civil:** {res['Estado Civil']}")
+            st.write(f"**CPF:** {res['CPF']} | **Doc:** {res['RG_CNH']}")
+            st.write(f"**Estado Civil:** {res['Estado_Civil']}")
+            st.write(f"**Nascimento:** {res['Nascimento']}")
+
+            st.markdown("### 2. Residência")
+            st.write(f"**Endereço:** {res['Endereco']}")
             st.write(f"**CEP:** {res['CEP']}")
-        with c3:
-            st.write(f"**Admissão:** {res['Admissao']}")
-            st.write(f"**Saldo FGTS:** R$ {res['FGTS_Val']:,.2f}")
+
+        with c2:
+            st.markdown("### 3. Análise de Renda")
+            st.write(f"**Salário Bruto:** R$ {res['Bruto']:,.2f}")
+            st.write(f"**Líquido (+ Adiantamento):** R$ {res['Liquido_Ajustado']:,.2f}")
+            st.write(f"**Tempo de Casa:** {res['Tempo_Casa']}")
+
+            st.markdown("### 4. Vínculo FGTS")
+            st.write(f"**Saldos por Conta:** {res['FGTS_Individual']}")
+            st.success(f"**Total FGTS Disponível:** R$ {res['FGTS_Total']:,.2f}")
 
         st.divider()
-
-        # 3. Análise de Renda e Viabilidade [Pilar 3, 4 e 5]
-        st.subheader("💰 Capacidade Financeira e Subsídio")
-        f1, f2, f3 = st.columns(3)
+        st.header("🎯 Enquadramento e Aprovação")
         
-        f1.metric("Renda Bruta (MCMV)", f"R$ {res['Bruto_Val']:,.2f}")
-        f2.metric("Renda Líquida Final", f"R$ {res['Liq_Val']:,.2f}")
+        e1, e2, e3 = st.columns(3)
+        e1.metric("Enquadramento", caixa['Faixa'])
+        e2.metric("Subsídio Estimado", f"R$ {caixa['Subsidio_Max']:,.2f}")
+        e3.metric("Capacidade de Prestação", f"R$ {caixa['Capacidade_Mensal']:,.2f}")
         
-        # Cálculo da Parcela Máxima (30% da renda líquida)
-        parcela_max = res['Liq_Val'] * 0.3
-        f3.metric("Parcela Máxima (30%)", f"R$ {parcela_max:,.2f}", delta="Capacidade Mensal")
+        st.info(f"**Taxa de Juros Aplicável:** {caixa['Taxa_Juros']}")
 
-        # Exibição do Subsídio
-        st.success(f"**Resultado:** {faixa} | **Subsídio Estimado:** R$ {valor_sub:,.2f}")
-        st.info(f"**Nota Técnica:** {detalhes}")
-
-        # 4. Exportação
+        # --- EXPORTAÇÃO ---
         st.divider()
-        df_export = pd.DataFrame([{
-            "Cliente": res['Nome'], "Renda Bruta": res['Bruto_Val'], 
-            "Renda Liquida": res['Liq_Val'], "Parcela Max": parcela_max,
-            "Enquadramento": faixa, "Subsidio": valor_sub
-        }])
+        df_export = pd.DataFrame([{**res, **caixa}])
         
         col_ex1, col_ex2 = st.columns(2)
         with col_ex1:
             buffer = BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 df_export.to_excel(writer, index=False)
-            st.download_button("📊 Exportar para Excel", data=buffer.getvalue(), file_name="analise_viabilidade.xlsx")
-        with col_ex2:
-            st.caption("Para exportar em PDF, utilize a função 'Imprimir' do navegador selecionando 'Salvar como PDF'.")
+            st.download_button("📊 Exportar para Excel", data=buffer.getvalue(), file_name="correspondente_macro.xlsx")
