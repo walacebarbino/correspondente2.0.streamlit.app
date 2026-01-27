@@ -9,91 +9,99 @@ from dateutil.relativedelta import relativedelta
 
 st.set_page_config(page_title="Parceria - Correspondente 2.0", layout="wide")
 st.title("🏦 Parceria - Correspondente 2.0")
+st.markdown("### Analista de Crédito e Subsídio MCMV")
 
-def analisar_documento_completo(texto):
-    dados = {}
+def calcular_subsidio(renda, regiao="Geral"):
+    """Calcula estimativa de subsídio MCMV baseada na renda bruta"""
+    if renda <= 2850:
+        return 55000.00  # Máximo Faixa 1 (Estimado)
+    elif renda <= 4700:
+        return 29000.00  # Média Faixa 2 (Estimado)
+    elif renda <= 8000:
+        return 0.00      # Faixa 3 geralmente não tem subsídio direto, apenas juros reduzidos
+    return 0.00
+
+def analisar_texto_completo(texto_paginas):
+    # Une o texto de todas as páginas para uma análise global
+    texto_total = " ".join(texto_paginas)
     hoje = datetime.now()
+    dados = {}
 
-    # --- EXTRAÇÃO DE IDENTIFICAÇÃO ---
-    nome = re.search(r'(?:NOME|COLABORADOR|CLIENTE)[:\s]+([A-Z\s]{5,})', texto, re.I)
+    # --- EXTRAÇÃO DE IDENTIDADE ---
+    nome = re.search(r'(?:NOME|COLABORADOR|CLIENTE)[:\s]+([A-Z\s]{5,})', texto_total, re.I)
     dados['Nome'] = nome.group(1).strip().split('\n')[0] if nome else "Não encontrado"
     
-    cpf = re.search(r'\d{3}\.\d{3}\.\d{3}-\d{2}', texto)
+    cpf = re.search(r'\d{3}\.\d{3}\.\d{3}-\d{2}', texto_total)
     dados['CPF'] = cpf.group() if cpf else "Não encontrado"
 
-    # --- EXTRAÇÃO DE ENDEREÇO (Padrão para evitar valores) ---
-    cep_match = re.search(r'(\d{5}-\d{3})', texto)
-    dados['CEP'] = cep_match.group(1) if cep_match else "Não encontrado"
-    rua_match = re.search(r'(?:RUA|AV|AVENIDA|DR|ESTRADA|LOGRADOURO)[:\s]+([A-Z0-9\s,.-]+)', texto, re.I)
-    dados['Endereço'] = rua_match.group(0).strip().split('\n')[0] if rua_match else "Não encontrado"
+    # --- EXTRAÇÃO DE RENDA E FGTS (SOMA GLOBAL) ---
+    renda_match = re.search(r'(?:LÍQUIDO|TOTAL|BRUTO)[:\s]*R\$\s?(\d{1,3}(\.\d{3})*,\d{2})', texto_total, re.I)
+    renda_val = float(renda_match.group(1).replace('.', '').replace(',', '.')) if renda_match else 0.0
+    dados['Renda Bruta'] = renda_val
 
-    # --- EXTRAÇÃO DE RENDA E TRABALHO ---
-    adm_match = re.search(r'(?:ADMISSÃO|ADM|DATA ADM)[:\s]*(\d{2}/\d{2}/\d{4})', texto, re.I)
-    dados['Data Admissão'] = adm_match.group(1) if adm_match else "Não encontrado"
-    
-    renda_match = re.search(r'(?:LÍQUIDO|TOTAL|BRUTO)[:\s]*R\$\s?(\d{1,3}(\.\d{3})*,\d{2})', texto, re.I)
-    renda_str = renda_match.group(1) if renda_match else "0,00"
-    dados['Renda'] = f"R$ {renda_str}"
+    # Soma todos os saldos de FGTS encontrados nas páginas
+    saldos_fgts = re.findall(r'(?:SALDO|DISPONÍVEL|RESCISÓRIOS)[:\s]*R\$\s?(\d{1,3}(\.\d{3})*,\d{2})', texto_total, re.I)
+    total_fgts = sum([float(s[0].replace('.', '').replace(',', '.')) for s in saldos_fgts])
+    dados['FGTS Total'] = total_fgts
 
-    # --- EXTRAÇÃO DE FGTS ---
-    # Busca por saldo total disponível no extrato
-    fgts_match = re.search(r'(?:SALDO|TOTAL DISPONÍVEL|FINS RESCISÓRIOS)[:\s]*R\$\s?(\d{1,3}(\.\d{3})*,\d{2})', texto, re.I)
-    saldo_fgts = fgts_match.group(1) if fgts_match else "0,00"
-    dados['Saldo FGTS'] = f"R$ {saldo_fgts}"
-
-    # --- LÓGICA DE REGRAS CAIXA ---
+    # --- REGRAS DE NEGÓCIO ---
     alertas = []
     
-    # 1. Validade do Comprovante (90 dias)
-    datas = re.findall(r'(\d{2}/\d{2}/\d{4})', texto)
+    # 1. Enquadramento e Subsídio
+    dados['Subsídio Est.'] = calcular_subsidio(renda_val)
+    if renda_val <= 8000:
+        dados['Modalidade'] = "MCMV"
+    else:
+        dados['Modalidade'] = "SBPE"
+
+    # 2. Validade de Documento (90 dias)
+    datas = re.findall(r'(\d{2}/\d{2}/\d{4})', texto_total)
     if datas:
         try:
             data_doc = max([datetime.strptime(d, '%d/%m/%Y') for d in datas])
             dias = (hoje - data_doc).days
-            if "Neoenergia" in texto or "CEP" in texto: # Filtro simples para saber se é conta
-                if dias > 90: alertas.append(f"🔴 Comprovante Residência Antigo ({dias} dias)")
+            if dias > 90:
+                alertas.append(f"🔴 DOC ANTIGO: {dias} dias.")
         except: pass
 
-    # 2. Estabilidade (12 meses)
-    if dados['Data Admissão'] != "Não encontrado":
-        dt_adm = datetime.strptime(dados['Data Admissão'], '%d/%m/%Y')
+    # 3. Tempo de Casa
+    adm = re.search(r'(?:ADMISSÃO|ADM)[:\s]*(\d{2}/\d{2}/\d{4})', texto_total, re.I)
+    if adm:
+        dt_adm = datetime.strptime(adm.group(1), '%d/%m/%Y')
         tempo = relativedelta(hoje, dt_adm)
+        if tempo.years < 1:
+            alertas.append("⚠️ Estabilidade < 1 ano")
         dados['Tempo Casa'] = f"{tempo.years}a {tempo.months}m"
-        if tempo.years < 1: alertas.append("⚠️ Estabilidade < 1 ano")
-    
-    # 3. Faixas MCMV
-    try:
-        val_renda = float(renda_str.replace('.', '').replace(',', '.'))
-        if val_renda <= 2850: dados['Enquadramento'] = "Faixa 1 (MCMV)"
-        elif val_renda <= 4700: dados['Enquadramento'] = "Faixa 2 (MCMV)"
-        elif val_renda <= 8000: dados['Enquadramento'] = "Faixa 3 (MCMV)"
-        else: dados['Enquadramento'] = "SBPE"
-    except: dados['Enquadramento'] = "Verificar Renda"
+    else:
+        dados['Tempo Casa'] = "N/A"
 
-    dados['Inconformidades'] = " | ".join(alertas) if alertas else "✅ Pronto para Montagem"
+    dados['Parecer Final'] = " | ".join(alertas) if alertas else "✅ Processo Saneado"
     return dados
 
 # --- INTERFACE ---
-upload = st.file_uploader("Suba Documentos (PDF, JPG, PNG)", accept_multiple_files=True)
+upload = st.file_uploader("Suba os documentos do processo (PDF multi-páginas)", accept_multiple_files=True)
+
 if upload:
-    lista_analise = []
+    lista_final = []
     for arq in upload:
-        with st.spinner(f'Analisando {arq.name}...'):
+        with st.spinner(f'Analisando todas as páginas de {arq.name}...'):
+            texto_das_paginas = []
             if arq.type == "application/pdf":
-                paginas = convert_from_bytes(arq.read())
-                img = paginas[0]
+                paginas_img = convert_from_bytes(arq.read())
+                for p in paginas_img:
+                    texto_das_paginas.append(pytesseract.image_to_string(p, lang='por'))
             else:
                 img = Image.open(arq)
+                texto_das_paginas.append(pytesseract.image_to_string(img, lang='por'))
             
-            texto_ocr = pytesseract.image_to_string(img, lang='por')
-            resultado = analisar_documento_completo(texto_ocr)
-            resultado['Arquivo'] = arq.name
-            lista_analise.append(resultado)
+            res = analisar_texto_completo(texto_das_paginas)
+            res['Arquivo'] = arq.name
+            lista_final.append(res)
 
-    df = pd.DataFrame(lista_analise)
-    st.write("### 🚀 Parecer Técnico - Correspondente 2.0")
+    df = pd.DataFrame(lista_final)
+    st.write("### 📊 Resultado da Pré-Análise Técnica")
     st.dataframe(df, use_container_width=True)
     
-    # Exportação
-    df.to_excel("relatorio_caixa_completo.xlsx", index=False)
-    st.download_button("📥 Baixar Planilha Analisada", open("relatorio_caixa_completo.xlsx", "rb"), file_name="analise_processo.xlsx")
+    # Exportação formatada
+    df.to_excel("analise_correspondente_v4.xlsx", index=False)
+    st.download_button("📥 Baixar Planilha de Montagem de Processo", open("analise_correspondente_v4.xlsx", "rb"), file_name="analise_caixa_completa.xlsx")
