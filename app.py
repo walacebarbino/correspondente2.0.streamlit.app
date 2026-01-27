@@ -3,47 +3,62 @@ import pandas as pd
 import pytesseract
 from PIL import Image
 import re
+from pdf2image import convert_from_bytes
 
-# Título da App
-st.title("🚀 Parceria Soluções - Automação Imobiliária")
-st.subheader("Extração Automática de Dados para Correspondente Caixa")
+# 1. Mudança de Nome conforme solicitado
+st.set_page_config(page_title="Parceria - Correspondente 2.0", layout="wide")
+st.title("🏦 Parceria - Correspondente 2.0")
+st.subheader("Análise de Conformidade e Extração Automática")
 
-# Área de Upload
-arquivos = st.file_uploader("Arraste os documentos dos clientes (JPG, PNG)", accept_multiple_files=True)
+def analisar_regras_caixa(dados):
+    """Função para verificar inconformidades com regras da Caixa"""
+    alertas = []
+    
+    # Exemplo Regra MCMV (Faixa 3 - teto de 8k)
+    try:
+        valor_renda = float(dados['Renda'].replace('R$', '').replace('.', '').replace(',', '.').strip())
+        if valor_renda > 8000:
+            alertas.append("⚠️ Renda acima do limite para MCMV (Faixa 3).")
+    except:
+        pass
+
+    # Exemplo Regra de Documentação
+    if dados['CPF'] == "Não encontrado":
+        alertas.append("❌ CPF não identificado ou ilegível.")
+    
+    return " | ".join(alertas) if alertas else "✅ Em conformidade inicial"
+
+arquivos = st.file_uploader("Suba Documentos (PDF, JPG, PNG)", accept_multiple_files=True)
 
 if arquivos:
-    lista_dados = []
-    
-    for arquivo in arquivos:
-        # Abrir a imagem
-        img = Image.open(arquivo)
-        st.image(img, caption=f"Processando: {arquivo.name}", width=200)
+    lista_resultados = []
+    for arq in arquivos:
+        # Lógica para aceitar PDF e Imagem
+        if arq.type == "application/pdf":
+            paginas = convert_from_bytes(arq.read())
+            img = paginas[0] # Analisa a primeira página
+        else:
+            img = Image.open(arq)
         
-        # OCR - Transformar imagem em texto
         texto = pytesseract.image_to_string(img, lang='por')
         
-        # Extrair dados com Regex (Lógica que criamos antes)
-        dados = {
-            "Documento": arquivo.name,
-            "CPF": "Não encontrado",
-            "Renda": "Não encontrado",
-            "Estado Civil": "Não encontrado"
+        # Extração
+        cpf = re.search(r'\d{3}\.\d{3}\.\d{3}-\d{2}', texto)
+        renda = re.search(r'R\$\s?\d{1,3}(\.\d{3})*,\d{2}', texto)
+        
+        dados_extraidos = {
+            "Arquivo": arq.name,
+            "CPF": cpf.group() if cpf else "Não encontrado",
+            "Renda": renda.group() if renda else "Não encontrado"
         }
         
-        cpf = re.search(r'\d{3}\.\d{3}\.\d{3}-\d{2}', texto)
-        if cpf: dados["CPF"] = cpf.group()
-        
-        renda = re.search(r'R\$\s?\d{1,3}(\.\d{3})*,\d{2}', texto)
-        if renda: dados["Renda"] = renda.group()
-        
-        # Adicionar à lista
-        lista_dados.append(dados)
+        # Inserindo a inteligência de análise
+        dados_extraidos["Análise de Regras"] = analisar_regras_caixa(dados_extraidos)
+        lista_resultados.append(dados_extraidos)
 
-    # Mostrar Tabela na tela
-    df = pd.DataFrame(lista_dados)
-    st.write("### Dados Extraídos:", df)
-
-    # Botão para baixar Excel
-    df.to_excel("dados_clientes.xlsx", index=False)
-    with open("dados_clientes.xlsx", "rb") as f:
-        st.download_button("📥 Baixar Planilha Excel", f, file_name="dados_clientes.xlsx")
+    df = pd.DataFrame(lista_resultados)
+    st.dataframe(df, use_container_width=True)
+    
+    # Botão de Exportação
+    df.to_excel("analise_caixa.xlsx", index=False)
+    st.download_button("📥 Baixar Relatório de Inconformidades", open("analise_caixa.xlsx", "rb"), file_name="analise.xlsx")
