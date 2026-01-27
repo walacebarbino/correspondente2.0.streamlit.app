@@ -7,99 +7,96 @@ from pdf2image import convert_from_bytes
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-st.set_page_config(page_title="Parceria 2.0 - Resumo Macro", layout="wide")
-st.title("🏦 Parceria 2.0: Ficha de Qualificação Unificada")
+st.set_page_config(page_title="Parceria 2.0 - Gestão de Processos", layout="wide")
+st.title("🏦 Parceria 2.0: Analista Digital & Checklist")
 
-def extrair_valor(padrao, texto):
-    match = re.search(padrao, texto, re.I | re.M)
-    return match.group(1).strip() if match else None
-
-def analisar_macro_cliente(textos_combinados):
-    full_text = " ".join(textos_combinados)
+def analisar_macro_e_checklist(textos_combinados):
+    full_text = " ".join(textos_combinados).upper()
     hoje = datetime.now()
-    
-    # --- DICIONÁRIO DE DADOS UNIFICADO ---
-    ficha = {}
+    dados = {}
+    checklist = {
+        "Identificação (RG/CNH)": False,
+        "Comprovativo de Renda": False,
+        "Comprovativo de Residência": False,
+        "Extrato FGTS": False
+    }
 
-    # 1. Identidade (Busca em todos os docs)
-    # Padrão específico para o teu recibo e CNH
-    nome = extrair_valor(r'(?:NOME|COLABORADOR|CLIENTE)[:\s-]*([A-Z\s]{10,})', full_text)
-    ficha['Nome Cliente'] = nome.split('\n')[0] if nome else "Não identificado"
+    # --- EXTRAÇÃO DE DADOS (LÓGICA CONSOLIDADA) ---
+    nome = re.search(r'(?:NOME|COLABORADOR|CLIENTE)[:\s-]*([A-Z\s]{10,})', full_text)
+    dados['Nome'] = nome.group(1).split('\n')[0].strip() if nome else "Não identificado"
     
     cpf = re.search(r'\d{3}\.\d{3}\.\d{3}-\d{2}', full_text)
-    ficha['CPF'] = cpf.group() if cpf else "Não identificado"
-    
-    # 2. Localização (Foco no padrão Neoenergia)
-    cep = re.search(r'(\d{5}-\d{3})', full_text)
-    ficha['CEP'] = cep.group(1) if cep else "Não encontrado"
-    
-    # Procura endereço completo
-    rua = extrair_valor(r'(?:ENDEREÇO|RUA|AV)[:\s]+([A-Z0-9\s,.-]+54440-030|.+AP-\d+)', full_text)
-    ficha['Endereço'] = rua if rua else "Verificar Comprovante"
+    dados['CPF'] = cpf.group() if cpf else "Não identificado"
 
-    # 3. Vida Profissional (Foco no Recibo de Pagamento)
-    adm = extrair_valor(r'(?:ADMISSÃO)[:\s]*(\d{2}/\d{2}/\d{4})', full_text)
-    ficha['Data Admissão'] = adm if adm else "Não encontrada"
+    # --- VERIFICAÇÃO DO CHECKLIST ---
+    if "REGISTRO" in full_text or "IDENTIDADE" in full_text or "CNH" in full_text:
+        checklist["Identificação (RG/CNH)"] = True
     
-    cargo = extrair_valor(r'(?:CARGO)[:\s]+([A-Z\s]{5,})', full_text)
-    ficha['Cargo'] = cargo.split('\n')[0] if cargo else "Não encontrado"
+    if "RECIBO DE PAGAMENTO" in full_text or "CONTRACHEQUE" in full_text or "SALÁRIO" in full_text:
+        checklist["Comprovativo de Renda"] = True
+        # Extração de Renda
+        renda_match = re.findall(r'(?:LÍQUIDO|TOTAL)[:\s]*R\$\s?(\d{1,3}(?:\.\d{3})*,\d{2})', full_text)
+        dados['Renda'] = f"R$ {renda_match[-1]}" if renda_match else "R$ 0,00"
+    else:
+        dados['Renda'] = "R$ 0,00"
 
-    # 4. Financeiro e FGTS
-    # Padrão para "Total Líquido Pgto" ou "Líquido"
-    renda = re.findall(r'(?:LÍQUIDO|TOTAL)[:\s]*R\$\s?(\d{1,3}(?:\.\d{3})*,\d{2})', full_text, re.I)
-    ficha['Renda Líquida'] = f"R$ {renda[-1]}" if renda else "R$ 0,00"
-    
-    # Soma de FGTS (Procura todos os valores perto de FGTS)
-    fgts_valores = re.findall(r'(?:FGTS)[:\s]*R?\$\s?(\d{1,3}(?:\.\d{3})*,\d{2})', full_text, re.I)
-    total_fgts = sum([float(v.replace('.','').replace(',','.')) for v in fgts_valores])
-    ficha['Saldo FGTS Est.'] = f"R$ {total_fgts:,.2f}"
+    if "NEOENERGIA" in full_text or "CONTA DE LUZ" in full_text or "COMPROVANTE DE RESIDÊNCIA" in full_text:
+        checklist["Comprovativo de Residência"] = True
+        cep = re.search(r'(\d{5}-\d{3})', full_text)
+        dados['CEP'] = cep.group(1) if cep else "Não encontrado"
+    else:
+        dados['CEP'] = "Não encontrado"
 
-    # 5. Inteligência de Enquadramento
-    try:
-        val_r = float(renda[-1].replace('.','').replace(',','.')) if renda else 0
-        if val_r <= 2850: ficha['Faixa MCMV'] = "Faixa 1"
-        elif val_r <= 4700: ficha['Faixa MCMV'] = "Faixa 2"
-        else: ficha['Faixa MCMV'] = "Faixa 3 / SBPE"
-    except: ficha['Faixa MCMV'] = "Análise Manual"
+    if "FGTS" in full_text or "FUNDO DE GARANTIA" in full_text:
+        checklist["Extrato FGTS"] = True
+        fgts_vals = re.findall(r'(?:FGTS)[:\s]*R?\$\s?(\d{1,3}(?:\.\d{3})*,\d{2})', full_text)
+        total_fgts = sum([float(v.replace('.','').replace(',','.')) for v in fgts_vals])
+        dados['FGTS'] = f"R$ {total_fgts:,.2f}"
+    else:
+        dados['FGTS'] = "R$ 0,00"
 
-    # 6. Alertas de Pendência
-    alertas = []
-    if adm:
-        dt = datetime.strptime(adm, '%d/%m/%Y')
-        if relativedelta(hoje, dt).years < 1: alertas.append("⚠️ Estabilidade < 1 ano")
-    
-    ficha['Status do Processo'] = "✅ Pronto para Montagem" if not alertas else " | ".join(alertas)
-    
-    return ficha
+    return dados, checklist
 
 # --- INTERFACE ---
-st.info("💡 Sobe todos os documentos do mesmo cliente de uma vez para gerar o Resumo Macro.")
-files = st.file_uploader("Documentos (PDF/JPG)", accept_multiple_files=True)
+st.sidebar.header("Configurações")
+st.sidebar.info("Sobe todos os documentos de uma vez para análise completa.")
 
-if files:
+upload = st.file_uploader("Arraste os documentos do cliente (PDF/JPG)", accept_multiple_files=True)
+
+if upload:
     all_texts = []
-    for f in files:
-        with st.spinner(f'Lendo {f.name}...'):
+    for f in upload:
+        with st.spinner(f'Processando {f.name}...'):
             if f.type == "application/pdf":
                 pages = convert_from_bytes(f.read())
                 for p in pages: all_texts.append(pytesseract.image_to_string(p, lang='por'))
             else:
                 all_texts.append(pytesseract.image_to_string(Image.open(f), lang='por'))
     
-    # GERA O RESULTADO ÚNICO
-    resultado_final = analisar_macro_cliente(all_texts)
+    res_dados, res_checklist = analisar_macro_e_checklist(all_texts)
     
-    st.write("### 📜 Ficha de Qualificação Macro")
+    # Exibição de Resultados
+    col1, col2 = st.columns([2, 1])
     
-    # Exibição em formato de Card para ficar bonito
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Cliente", resultado_final['Nome Cliente'])
-    col1.metric("CPF", resultado_final['CPF'])
-    
-    col2.metric("Renda", resultado_final['Renda Líquida'])
-    col2.metric("Faixa", resultado_final['Faixa MCMV'])
-    
-    col3.metric("FGTS", resultado_final['Saldo FGTS Est.'])
-    col3.metric("Status", "Ok" if "✅" in resultado_final['Status do Processo'] else "Atenção")
+    with col1:
+        st.subheader("📋 Ficha Consolidada do Cliente")
+        st.write(f"**Nome:** {res_dados['Nome']}")
+        st.write(f"**CPF:** {res_dados['CPF']}")
+        st.write(f"**Renda Identificada:** {res_dados['Renda']}")
+        st.write(f"**Saldo FGTS Estimado:** {res_dados['FGTS']}")
+        st.write(f"**CEP:** {res_dados['CEP']}")
+        
+    with col2:
+        st.subheader("✅ Checklist de Documentos")
+        for item, status in res_checklist.items():
+            if status:
+                st.success(f"{item}: OK")
+            else:
+                st.error(f"{item}: FALTANDO")
 
-    st.table(pd.DataFrame([resultado_final]))
+    # Alerta de Próximos Passos
+    if all(res_checklist.values()):
+        st.balloons()
+        st.success("🚀 Documentação completa! O processo pode ser montado para a Caixa.")
+    else:
+        st.warning("⚠️ Atenção: O checklist indica documentos em falta ou ilegíveis.")
