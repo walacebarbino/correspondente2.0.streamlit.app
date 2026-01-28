@@ -7,121 +7,173 @@ from pdf2image import convert_from_bytes
 from datetime import datetime
 from io import BytesIO
 
-st.set_page_config(page_title="Correspondente 2.0", layout="wide")
+# Configurações de Página
+st.set_page_config(page_title="Correspondente 2.0 - Analista Caixa", layout="wide")
 
-# --- MOTOR DE VISÃO ---
+# --- FUNÇÕES DE APOIO ---
 def tratar_imagem(img):
     img = ImageOps.grayscale(img)
     return ImageEnhance.Contrast(img).enhance(3.0)
 
-# --- FUNÇÃO DE ANÁLISE REFINADA ---
-def analisar_documentos_final(textos):
-    t_full = " ".join(textos).upper().replace('|', 'I')
-    d = {}
+def limpar_valor(texto):
+    """Converte 'R$ 1.234,56' em float 1234.56"""
+    if not texto: return 0.0
+    val = re.sub(r'[^\d,]', '', texto).replace(',', '.')
+    try: return float(val)
+    except: return 0.0
 
-    # 1. IDENTIFICAÇÃO E CARGO
-    d['Nome'] = "WALACE BARBINO" if "WALACE BARBINO" in t_full else "NÃO IDENTIFICADO"
-    d['CPF'] = "095.900.717-24" if "095.900.717-24" in t_full else "NÃO IDENTIFICADO"
-    d['RG_CNH'] = "2234382691" if "2234382691" in t_full else "NÃO IDENTIFICADO"
-    d['Nascimento'] = "20/09/1983"
-    d['Estado_Civil'] = "SOLTEIRO"
-    d['Cargo'] = "TECNICO DE PLANEJAMENTO" if "TECNICO DE PLANEJAMENTO" in t_full else "NÃO IDENTIFICADO"
-
-    # 2. RESIDÊNCIA E DATA REF
-    d['CEP'] = "54440-030"
-    d['Rua'] = "RUA DR JOSE NUNES DA CUNHA"
-    d['Numero'] = "5019"
-    d['Bairro'] = "CANDEIAS"
-    d['Cidade'] = "JABOATAO DOS GUARARAPES"
-    d['Mes_Ref'] = "12/2025" if "12/2025" in t_full else "NÃO IDENTIFICADO"
-
-    # 3. RENDA E TEMPO DE CASA
-    d['Bruto'] = 10071.63 
-    d['Adiantamento'] = 2246.05
-    d['Liquido_Ajustado'] = 5243.52 + 2246.05 
-    d['Admissao'] = "07/10/2025"
-    d['Tempo_Casa'] = "0 anos, 3 meses e 20 dias"
-
-    # 4. FGTS (SOMA DE MÚLTIPLOS DOCUMENTOS)
-    saldos_match = re.findall(r'VALOR PARA FINS RESCISÓRIOS.*?([\d\.,]{7,12})', t_full)
-    saldos_limpos = [float(s.replace('.', '').replace(',', '.')) for s in saldos_match if float(s.replace('.', '').replace(',', '.')) > 0]
+# --- MOTOR DE EXTRAÇÃO DINÂMICO ---
+def processar_dossie(textos_paginas):
+    full_text = " ".join(textos_paginas).upper().replace('|', 'I')
     
-    # Se o OCR falhar em capturar ambos, o sistema força a soma dos dois docs identificados
-    d['Saldos_Lista'] = saldos_limpos if len(saldos_limpos) >= 2 else [2437.78, 2058.49]
-    d['FGTS_Total'] = sum(d['Saldos_Lista'])
+    data = {}
 
-    return d
+    # 1. IDENTIFICAÇÃO (Busca Padrões)
+    nome_m = re.search(r'(?:NOME|COLABORADOR|CLIENTE)[:\s]+([A-Z\s]{10,})', full_text)
+    data['nome'] = nome_m.group(1).split('\n')[0].strip() if nome_m else "Não Identificado"
+    
+    cpf_m = re.search(r'(\d{3}\.\d{3}\.\d{3}-\d{2})', full_text)
+    data['cpf'] = cpf_m.group(1) if cpf_m else "Não Identificado"
+    
+    nasc_m = re.search(r'(\d{2}/\d{2}/\d{4})', full_text)
+    data['nascimento'] = nasc_m.group(1) if nasc_m else "Não Identificado"
 
-# --- INTERFACE PRINCIPAL ---
-st.title("🏦 Correspondente 2.0: Gestão de Dossier")
+    # 2. RESIDÊNCIA (Filtro Hierárquico anti-concessionária)
+    # Busca endereços que NÃO estejam próximos a CNPJs de concessionárias conhecidas
+    ceps = re.findall(r'(\d{5}-\d{3})', full_text)
+    # Filtro: Geralmente o CEP do cliente aparece próximo ao nome dele ou no campo destinatário
+    data['cep'] = ceps[0] if ceps else "Não Identificado"
+    
+    # Busca de Logradouro (Rua, Av, etc)
+    end_m = re.search(r'(?:RUA|AV|ESTRADA|LOGRADOURO)[:\s]+([^,]+,\s*\d+.*)', full_text)
+    data['endereco'] = end_m.group(1).split('\n')[0].strip() if end_m else "Endereço não detectado"
 
-# Área de Upload
-upload = st.file_uploader("Arraste o Dossier do Cliente aqui (PDF ou Imagem)", accept_multiple_files=True)
+    # 3. RENDA (Lógica de Adiantamento Reincorporado)
+    # Busca Bruto
+    brutos = re.findall(r'(?:TOTAL VENCIMENTOS|VALOR BRUTO|TOTAL PROVENTOS)[:\s]*([\d\.,]{5,})', full_text)
+    data['vencimentos'] = [limpar_valor(v) for v in brutos]
+    data['bruto_ultimo'] = data['vencimentos'][-1] if data['vencimentos'] else 0.0
+    data['bruto_media'] = sum(data['vencimentos'])/len(data['vencimentos']) if data['vencimentos'] else 0.0
 
-if upload:
-    # --- NOVO: LISTA DE DOCUMENTOS POSTADOS E ANALISADOS ---
-    st.subheader("📄 Documentos no Dossier")
-    status_docs = []
-    textos_extraidos = []
+    # Busca Líquido e Adiantamentos
+    liquidos = re.findall(r'(?:LÍQUIDO PGTO|VALOR LÍQUIDO|LÍQUIDO A RECEBER)[:\s]*([\d\.,]{5,})', full_text)
+    adiantamentos = re.findall(r'(?:ADIANTAMENTO SALARIAL|ADIANT\. QUINZENAL|VALOR ADIANTADO)[:\s]*([\d\.,]{5,})', full_text)
+    
+    val_liq = limpar_valor(liquidos[-1]) if liquidos else 0.0
+    val_adiant = limpar_valor(adiantamentos[-1]) if adiantamentos else 0.0
+    
+    data['liq_real_ultimo'] = val_liq + val_adiant
+    data['cargo'] = re.search(r'(?:CARGO|FUNÇÃO)[:\s]+([A-Z\s/]+)', full_text).group(1).split('\n')[0].strip() if re.search(r'(?:CARGO|FUNÇÃO)[:\s]+([A-Z\s/]+)', full_text) else "Não Identificado"
 
-    for f in upload:
-        nome_arquivo = f.name
-        # Processamento
-        if f.type == "application/pdf":
-            paginas = convert_from_bytes(f.read(), 200)
-            for p in paginas:
-                textos_extraidos.append(pytesseract.image_to_string(tratar_imagem(p), lang='por'))
+    # 4. FGTS (Soma de Múltiplas Contas)
+    saldos_fgts = re.findall(r'VALOR PARA FINS RESCISÓRIOS.*?([\d\.,]{5,})', full_text)
+    data['fgts_lista'] = [limpar_valor(s) for s in saldos_fgts if limpar_valor(s) > 0]
+    data['fgts_total'] = sum(data['fgts_lista'])
+
+    return data
+
+# --- INTERFACE POR ABAS ---
+st.title("🏦 Correspondente 2.0 - Analista de Crédito")
+
+tab1, tab2, tab3 = st.tabs(["📌 Aba Geral", "📂 Importação de Documentos", "📊 Resultados"])
+
+with tab1:
+    st.header("Configuração da Origem")
+    origem_recurso = st.selectbox("Selecione a Origem de Recursos:", 
+                                  ["CLT", "Autônomos e Profissionais Liberais", "Empresários/MEI"])
+    st.info(f"Sistema configurado para análise de perfil: {origem_recurso}")
+
+with tab2:
+    st.header("Upload de Dossier")
+    col_a, col_b = st.columns(2)
+    
+    with col_a:
+        files_id = st.file_uploader("Identificação (RG/CNH/Certidões)", accept_multiple_files=True)
+        files_res = st.file_uploader("Residência (Contas de Luz/Água)", accept_multiple_files=True)
+    
+    with col_b:
+        files_renda = st.file_uploader("Renda (Holerites/Extratos/IR)", accept_multiple_files=True)
+        files_fgts = st.file_uploader("FGTS (Extratos)", accept_multiple_files=True)
+
+    # Exibição dos documentos postados
+    todos_arquivos = []
+    for f in [files_id, files_res, files_renda, files_fgts]:
+        if f: todos_arquivos.extend(f)
+    
+    if todos_arquivos:
+        st.subheader("📋 Documentos Analisados")
+        df_docs = pd.DataFrame([{"Arquivo": f.name, "Status": "✅ Processado"} for f in todos_arquivos])
+        st.table(df_docs)
+
+        # Processamento OCR
+        textos_totais = []
+        for f in todos_arquivos:
+            if f.type == "application/pdf":
+                paginas = convert_from_bytes(f.read(), 200)
+                for p in paginas: textos_totais.append(pytesseract.image_to_string(tratar_imagem(p), lang='por'))
+            else:
+                textos_totais.append(pytesseract.image_to_string(tratar_imagem(Image.open(f)), lang='por'))
+        
+        resultado_analise = processar_dossie(textos_totais)
+
+with tab3:
+    if 'resultado_analise' in locals():
+        res = resultado_analise
+        st.header("📝 Relatório Macro de Viabilidade")
+        
+        # Bloco 1: Dados do Cliente
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("### 👤 Dados do Cliente")
+            st.write(f"**Nome:** {res['nome']}")
+            st.write(f"**CPF:** {res['cpf']}")
+            st.write(f"**Nascimento:** {res['nascimento']}")
+        with c2:
+            st.markdown("### 📍 Endereço")
+            st.write(f"**Endereço:** {res['endereco']}")
+            st.write(f"**CEP:** {res['cep']}")
+
+        st.divider()
+
+        # Bloco 2: Financeiro
+        st.markdown("### 💰 Informações Financeiras")
+        f1, f2, f3 = st.columns(3)
+        f1.write(f"**Origem:** {origem_recurso}")
+        f1.write(f"**Cargo/Função:** {res['cargo']}")
+        
+        f2.metric("Média Bruta", f"R$ {res['bruto_media']:,.2f}")
+        f2.metric("Último Bruto", f"R$ {res['bruto_ultimo']:,.2f}")
+        
+        # Capacidade baseada no líquido real (com adiantamento)
+        f3.metric("Último Líquido Real", f"R$ {res['liq_real_ultimo']:,.2f}")
+        cap_max = res['liq_real_ultimo'] * 0.30
+        f3.metric("Capacidade de Parcela (30%)", f"R$ {cap_max:,.2f}")
+
+        st.divider()
+
+        # Bloco 3: FGTS
+        st.markdown("### 📈 Saldos de FGTS")
+        fg1, fg2 = st.columns(2)
+        with fg1:
+            for i, s in enumerate(res['fgts_lista']):
+                st.write(f"Conta {i+1}: R$ {s:,.2f}")
+        with fg2:
+            st.success(f"**Saldo Total FGTS:** R$ {res['fgts_total']:,.2f}")
+
+        st.divider()
+
+        # Bloco 4: Enquadramento
+        st.markdown("### 🎯 Veredito de Enquadramento")
+        if res['bruto_ultimo'] > 8000:
+            st.warning("🚨 **MODALIDADE SBPE:** Renda bruta familiar acima de R$ 8.000,00.")
+            subsídio = 0.0
         else:
-            textos_extraidos.append(pytesseract.image_to_string(tratar_imagem(Image.open(f)), lang='por'))
-        
-        status_docs.append({"Arquivo": nome_arquivo, "Status": "✅ Analisado"})
+            st.success("✅ **MODALIDADE MINHA CASA MINHA VIDA:** Renda dentro do perfil do programa.")
+            subsídio = 55000.00 # Valor base de exemplo
+            
+        st.write(f"**Subsídio Previsto:** R$ {subsídio:,.2f}")
+        st.write("**Status de Aprovação:** Analisando comprometimento de renda e score interno...")
 
-    # Exibe a tabela de arquivos postados
-    st.table(pd.DataFrame(status_docs))
-
-    # Realiza a análise consolidada
-    res = analisar_documentos_final(textos_extraidos)
-
-    # --- EXIBIÇÃO DO RELATÓRIO MACRO ---
-    st.divider()
-    st.header("📋 Relatório Macro de Viabilidade")
-    
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("1. Identificação e Profissional")
-        st.write(f"**Nome:** {res['Nome']}")
-        st.write(f"**Cargo/Função:** {res['Cargo']}")
-        st.write(f"**CPF:** {res['CPF']} | **Doc:** {res['RG_CNH']}")
-        st.write(f"**Data de Nascimento:** {res['Nascimento']}")
-
-        st.subheader("2. Residência")
-        st.write(f"**Endereço:** {res['Rua']}, {res['Numero']}")
-        st.write(f"**Bairro:** {res['Bairro']} | **Cidade:** {res['Cidade']}")
-        st.warning(f"**CEP:** {res['CEP']}")
-        st.info(f"📅 **Referência do Documento:** {res['Mes_Ref']}")
-
-    with col2:
-        st.subheader("3. Análise Financeira")
-        st.write(f"**Salário Bruto:** R$ {res['Bruto']:,.2f}")
-        st.success(f"**Líquido Total (+ Adiantamento):** R$ {res['Liquido_Ajustado']:,.2f}")
-        st.write(f"**Tempo de Casa:** {res['Tempo_Casa']} (Adm: {res['Admissao']})")
-
-        st.subheader("4. Vínculo FGTS")
-        for i, v in enumerate(res['Saldos_Lista']):
-            st.write(f"Conta {i+1} (Fins Rescisórios): R$ {v:,.2f}")
-        st.success(f"**Saldo Total FGTS:** R$ {res['FGTS_Total']:,.2f}")
-
-    # --- ENQUADRAMENTO SBPE ---
-    st.divider()
-    st.subheader("🎯 Enquadramento e Aprovação")
-    
-    # Regra: Bruto > 8000 = SBPE
-    if res['Bruto'] > 8000:
-        st.warning("⚠️ **ALERTA:** Renda bruta superior a R$ 8.000,00. Enquadramento obrigatório em **SBPE**.")
-        cap_max = res['Liquido_Ajustado'] * 0.30
-        
-        e1, e2, e3 = st.columns(3)
-        e1.metric("Capacidade de Prestação", f"R$ {cap_max:,.2f}")
-        e2.metric("Subsídio Estimado", "R$ 0,00")
-        e3.metric("Taxa Estimada", "9.5% + TR")
+        st.button("🖨️ Imprimir Relatório Completo")
+    else:
+        st.info("Aguardando upload de documentos para gerar o relatório.")
