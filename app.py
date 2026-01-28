@@ -4,167 +4,109 @@ import pytesseract
 from PIL import Image, ImageOps, ImageEnhance
 import re
 from pdf2image import convert_from_bytes
-from datetime import datetime, date
+from datetime import datetime
 
-# --- CONFIGURAÇÕES INICIAIS ---
-st.set_page_config(page_title="Analista Documental Caixa", layout="wide")
+# --- CONFIGURAÇÃO DE INTERFACE ---
+st.set_page_config(page_title="Caixa Correspondente 2.0", layout="wide")
 
-def limpar_valor(texto):
+# --- FUNÇÕES DE PROCESSAMENTO ---
+def limpar_v(texto):
     if not texto: return 0.0
-    # Remove tudo que não é número, vírgula ou ponto
-    val = re.sub(r'[^\d,.]', '', texto)
-    if ',' in val and '.' in val:
-        val = val.replace('.', '').replace(',', '.')
-    elif ',' in val:
-        val = val.replace(',', '.')
-    try:
-        return float(val)
-    except:
-        return 0.0
+    # Remove R$ e limpa formatação brasileira para cálculo
+    match = re.search(r'(\d{1,3}(\.\d{3})*,\d{2})', texto)
+    if match:
+        return float(match.group(1).replace('.', '').replace(',', '.'))
+    return 0.0
 
-def calcular_tempo_casa(data_admissao):
-    try:
-        admissao = datetime.strptime(data_admissao, "%d/%m/%Y").date()
-        hoje = date.today()
-        anos = hoje.year - admissao.year - ((hoje.month, hoje.day) < (admissao.month, admissao.day))
-        return f"{anos} anos"
-    except:
-        return "Não identificado"
+# --- MOTOR OCR ESPECIALIZADO ---
+def motor_analise_caixa_v8(texto_full):
+    t = texto_full.upper()
+    d = {}
 
-def validar_data(texto, meses_limite):
-    datas = re.findall(r'(\d{2}/\d{2}/\d{4})', texto)
-    if not datas: return "⚠️ NÃO DETECTADO"
+    # 1. EXTRAÇÃO HOLERITE (Conforme image_7c1db8)
+    d['colaborador'] = re.search(r'COLABORADOR[:\s]*[\d\s\-]*([A-Z\s]{10,})', t).group(1).strip() if re.search(r'COLABORADOR', t) else "Não Identificado"
+    d['cargo'] = re.search(r'CARGO[:\s]*([A-Z\s]{5,})', t).group(1).strip() if re.search(r'CARGO', t) else "Não Identificado"
+    d['admissao_h'] = re.search(r'ADMISSÃO[:\s]*(\d{2}/\d{2}/\d{4})', t).group(1) if re.search(r'ADMISSÃO', t) else "---"
     
-    hoje = datetime.now()
-    try:
-        # Pega a data mais recente encontrada no documento
-        data_doc = max([datetime.strptime(d, "%d/%m/%Y") for d in datas])
-        diferenca = (hoje - data_doc).days / 30
-        if diferenca > meses_limite:
-            return "⚠️ DOCUMENTO EXPIRADO"
-        return "✅ VÁLIDO"
-    except:
-        return "⚠️ ERRO NA DATA"
-
-# --- MOTOR DE EXTRAÇÃO OCR ---
-def extrair_dados_documentos(texto_completo):
-    dados = {}
-    t = texto_completo.upper()
-
-    # Identificação
-    dados['nome'] = re.search(r'(?:NOME|CLIENTE)[:\s]+([A-Z\s]{10,})', t).group(1).strip() if re.search(r'(?:NOME|CLIENTE)[:\s]+([A-Z\s]{10,})', t) else "Não encontrado"
-    dados['cpf'] = re.search(r'(\d{3}\.\d{3}\.\d{3}-\d{2})', t).group(1) if re.search(r'(\d{3}\.\d{3}\.\d{3}-\d{2})', t) else "Não encontrado"
-    dados['rg'] = re.search(r'(?:RG|IDENTIDADE)[:\s]+([\d\.X-]{7,12})', t).group(1) if re.search(r'(?:RG|IDENTIDADE)[:\s]+([\d\.X-]{7,12})', t) else "Não encontrado"
-    dados['nasc'] = re.search(r'(?:NASCIMENTO|NASC)[:\s]+(\d{2}/\d{2}/\d{4})', t).group(1) if re.search(r'(?:NASCIMENTO|NASC)[:\s]+(\d{2}/\d{2}/\d{4})', t) else "Não encontrado"
-    dados['est_civil'] = re.search(r'(?:ESTADO CIVIL)[:\s]+(SOLTEIRO|CASADO|DIVORCIADO|VIUVO|UNIAO ESTAVEL)', t).group(1) if re.search(r'(?:ESTADO CIVIL)[:\s]+(SOLTEIRO|CASADO|DIVORCIADO|VIUVO|UNIAO ESTAVEL)', t) else "Não encontrado"
+    # Valores do Holerite
+    bruto_match = re.search(r'VENCIMENTOS.*?([\d\.,]{6,})', t)
+    d['bruto'] = limpar_v(bruto_match.group(1)) if bruto_match else 0.0
     
-    # Renda e Cargo
-    dados['cargo'] = re.search(r'(?:CARGO|FUNCAO)[:\s]+([A-Z\s/]{5,})', t).group(1).split('\n')[0].strip() if re.search(r'(?:CARGO|FUNCAO)[:\s]+([A-Z\s/]{5,})', t) else "Não encontrado"
-    dados['admissao'] = re.search(r'(?:ADMISSAO)[:\s]+(\d{2}/\d{2}/\d{4})', t).group(1) if re.search(r'(?:ADMISSAO)[:\s]+(\d{2}/\d{2}/\d{4})', t) else ""
+    liq_pgto_match = re.search(r'TOTAL LÍQUIDO PGT[Oº][: \s]*([\d\.,]{6,})', t)
+    d['liq_pgto'] = limpar_v(liq_pgto_match.group(1)) if liq_pgto_match else 0.0
     
-    # Financeiro (Regex para valores após palavras chave)
-    brutos = re.findall(r'(?:BRUTO|VENCIMENTOS|PROVENTOS).*?([\d\.,]{5,})', t)
-    liquidos = re.findall(r'(?:LIQUIDO|A RECEBER).*?([\d\.,]{5,})', t)
-    adiantamentos = re.findall(r'(?:ADIANTAMENTO|ANTECIPACAO|VALE).*?([\d\.,]{5,})', t)
-
-    val_brutos = [limpar_valor(v) for v in brutos]
-    dados['ult_bruto'] = val_brutos[-1] if val_brutos else 0.0
-    dados['media_bruta'] = sum(val_brutos)/len(val_brutos) if val_brutos else 0.0
+    # REGRA DE OURO: Adiantamento (Destaque amarelo image_7c1db8)
+    adt_match = re.search(r'(?:ADIANTAMENTO SALARIAL|ANTECIPAÇÃO).*?([\d\.,]{6,})', t)
+    d['adiantamento'] = limpar_v(adt_match.group(1)) if adt_match else 0.0
     
-    # Regra de Reincorporação
-    ult_liq = limpar_valor(liquidos[-1]) if liquidos else 0.0
-    ult_adt = limpar_valor(adiantamentos[-1]) if adiantamentos else 0.0
-    dados['liq_real'] = ult_liq + ult_adt
+    # SOMA OBRIGATÓRIA
+    d['liq_real'] = d['liq_pgto'] + d['adiantamento']
+
+    # 2. EXTRAÇÃO FGTS (Conforme image_7c297d)
+    d['empregador'] = re.search(r'EMPREGADOR[:\s]*([A-Z0-9\s\.]{5,})', t).group(1).strip() if re.search(r'EMPREGADOR', t) else "Não Identificado"
     
-    # FGTS
-    empresas = re.findall(r'(?:EMPRESA|EMPREGADOR)[:\s]+([A-Z\s\.]{10,})', t)
-    fins = re.findall(r'(?:FINS RESCISORIOS).*?([\d\.,]{5,})', t)
-    creditos = re.findall(r'(?:CREDITO DE).*?([\d\.,]{5,})', t)
+    fins_rescisorios = re.search(r'VALOR PARA FINS RECISÓRIOS[:\s]*R\$\s*([\d\.,]{5,})', t)
+    d['fgts_fins'] = limpar_v(fins_rescisorios.group(1)) if fins_rescisorios else 0.0
     
-    dados['fgts_lista'] = []
-    for i in range(len(fins)):
-        dados['fgts_lista'].append({
-            'empresa': empresas[i].strip() if i < len(empresas) else "Conta Antiga",
-            'valor': limpar_valor(fins[i]) + (limpar_valor(creditos[i]) if i < len(creditos) else 0)
-        })
-    dados['fgts_total'] = sum(item['valor'] for item in dados['fgts_lista'])
+    # Saldo Atual (Último valor da coluna TOTAL)
+    saldos = re.findall(r'([\d\.,]{5,})$', t, re.MULTILINE)
+    d['fgts_saldo_atual'] = limpar_v(saldos[-1]) if saldos else 0.0
 
-    return dados
+    return d
 
-# --- INTERFACE STREAMLIT ---
-st.title("📑 Sistema de Análise Documental - Crédito Imobiliário")
+# --- INTERFACE POR ABAS ---
+tab_import, tab_result = st.tabs(["2. Aba Importação", "3. Aba de Resultados"])
 
-tab1, tab2, tab3 = st.tabs(["Aba Geral", "Importação", "Resultados"])
-
-with tab1:
-    st.header("Origem de Recursos")
-    origem = st.selectbox("Selecione a Origem:", ["CLT", "Autônomo/Liberal", "Empresário/MEI"])
-
-with tab2:
-    st.header("Importação de Documentos")
-    col1, col2 = st.columns(2)
+with tab_import:
+    u_renda = st.file_uploader("Documentos de Renda (Holerites)", accept_multiple_files=True)
+    u_fgts = st.file_uploader("Extratos de FGTS", accept_multiple_files=True)
     
-    with col1:
-        u_id = st.file_uploader("Identificação (RG/CPF/CNH/Certidões)", accept_multiple_files=True)
-        u_res = st.file_uploader("Comprovante de Residência", accept_multiple_files=True)
-        u_ext = st.file_uploader("Extratos Bancários (6 meses)", accept_multiple_files=True)
+    texto_total = ""
+    if st.button("Analisar Documentos"):
+        for f in (u_renda or []) + (u_fgts or []):
+            if f.type == "application/pdf":
+                pags = convert_from_bytes(f.read(), 200)
+                txt = " ".join([pytesseract.image_to_string(p, lang='por') for p in pags])
+            else:
+                txt = pytesseract.image_to_string(Image.open(f), lang='por')
+            texto_total += " " + txt
         
-    with col2:
-        u_renda = st.file_uploader("Comprovação de Renda (Holerites)", accept_multiple_files=True)
-        u_fgts = st.file_uploader("Extratos FGTS", accept_multiple_files=True)
-        u_ir = st.file_uploader("IR / DECORE", accept_multiple_files=True)
+        st.session_state['res'] = motor_analise_caixa_v8(texto_total)
+        st.success("Análise Concluída!")
 
-    status_data = []
-    texto_acumulado = ""
+with tab_result:
+    if 'res' in st.session_state:
+        r = st.session_state['res']
+        
+        # Estilização do Relatório (Conforme image_992ab3 e image_97d51a)
+        st.header("Relatório Macro de Viabilidade")
+        
+        with st.expander("👤 Dados Cliente", expanded=True):
+            st.write(f"**Nome completo:** {r['colaborador']}")
+            st.write(f"**Cargo/Função:** {r['cargo']}")
+            st.write(f"**Tempo de casa:** {r['admissao_h']} (Admissão)")
 
-    if st.button("Processar Documentos"):
-        # Lógica de processamento simplificada para o exemplo
-        all_uploads = [
-            (u_id, "ID", 999), (u_res, "Residência", 3), (u_renda, "Renda", 3), 
-            (u_ext, "Extrato", 6), (u_fgts, "FGTS", 99), (u_ir, "IR", 12)
-        ]
-        
-        for up, tipo, prazo in all_uploads:
-            if up:
-                for f in up:
-                    # Se for PDF, converte pra imagem, se imagem abre direto
-                    if f.type == "application/pdf":
-                        pags = convert_from_bytes(f.read())
-                        txt = " ".join([pytesseract.image_to_string(p, lang='por') for p in pags])
-                    else:
-                        txt = pytesseract.image_to_string(Image.open(f), lang='por')
-                    
-                    st_doc = validar_data(txt, prazo) if prazo < 99 else "✅ IMPORTADO"
-                    status_data.append({"Documento": f.name, "Tipo": tipo, "Status": st_doc})
-                    texto_acumulado += " " + txt
-        
-        st.table(pd.DataFrame(status_data))
-        st.session_state['dados_extraidos'] = extrair_dados_documentos(texto_acumulado)
-
-with tab3:
-    if 'dados_extraidos' in st.session_state:
-        d = st.session_state['dados_extraidos']
-        st.header("Relatório de Análise")
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("Dados Cadastrais")
-            st.write(f"**Nome:** {d['nome']}")
-            st.write(f"**CPF:** {d['cpf']} | **RG:** {d['rg']}")
-            st.write(f"**Nascimento:** {d['nasc']}")
-            st.write(f"**Estado Civil:** {d['est_civil']}")
-            st.write(f"**Tempo de Casa:** {calcular_tempo_casa(d['admissao'])}")
+        with st.expander("💰 Financeiro", expanded=True):
+            col1, col2 = st.columns(2)
+            col1.metric("Média Salarial Bruta", f"R$ {r['bruto']:,.2f}")
+            col1.metric("Último Salário Bruto", f"R$ {r['bruto']:,.2f}")
             
-        with c2:
-            st.subheader("Análise Financeira")
-            st.write(f"**Cargo:** {d['cargo']}")
-            st.write(f"**Média Bruta:** R$ {d['media_bruta']:,.2f}")
-            st.write(f"**Último Bruto:** R$ {d['ult_bruto']:,.2f}")
-            st.metric("Líquido Real (C/ Adiantamento)", f"R$ {d['liq_real']:,.2f}")
+            col2.metric("Média Salarial Líquida", f"R$ {r['liq_pgto']:,.2f}")
+            col2.metric("Último Líquido Real", f"R$ {r['liq_real']:,.2f}", delta=f"Adiant.: R$ {r['adiantamento']:,.2f}")
+            st.caption("↑ C/ Adiantamento (Reincorporado)")
 
-        st.subheader("FGTS e Veredito")
-        for conta in d['fgts_lista']:
-            st.write(f"- {conta['empresa']}: R$ {conta['valor']:,.2f}")
-        
-        modalidade = "SBPE" if d['ult_bruto'] > 8000 else "MCMV"
-        st.success(f"**Veredito:** Modalidade {modalidade} | Status: Provável Aprovação")
+        with st.expander("📈 FGTS (Vínculos Identificados)", expanded=True):
+            st.info(f"**Empregador:** {r['empregador']}")
+            st.write(f"**Valor Fins Rescisórios:** R$ {r['fgts_fins']:,.2f}")
+            st.write(f"**Saldo Atual:** R$ {r['fgts_saldo_atual']:,.2f}")
+            
+            st.markdown(f"""
+                <div style="background-color: #004d1a; padding: 10px; border-radius: 5px;">
+                    <b style="color: white;">Total FGTS Identificado: R$ {r['fgts_saldo_atual']:,.2f}</b>
+                </div>
+            """, unsafe_allow_html=True)
+
+        # VEREDITO FINAL (Conforme image_992a34)
+        st.divider()
+        st.subheader(f"Status de Provável Aprovação: {'✅ ALTA' if r['liq_real'] > 0 else '❌ DADOS INCOMPLETOS'}")
+        st.button("📄 Gerar Impressão / Relatório PDF")
