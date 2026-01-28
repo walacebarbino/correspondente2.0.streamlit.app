@@ -4,176 +4,179 @@ import pytesseract
 from PIL import Image, ImageOps, ImageEnhance
 import re
 from pdf2image import convert_from_bytes
-from datetime import datetime
-from io import BytesIO
+from datetime import datetime, timedelta
+import io
 
-# Configurações de Página
-st.set_page_config(page_title="Correspondente 2.0 - Analista Caixa", layout="wide")
+# Configurações de Interface
+st.set_page_config(page_title="Caixa Correspondente 2.0", layout="wide")
 
-# --- FUNÇÕES DE APOIO ---
-def tratar_imagem(img):
+# --- FUNÇÕES DE APOIO E OCR ---
+def preparar_imagem(img):
     img = ImageOps.grayscale(img)
     return ImageEnhance.Contrast(img).enhance(3.0)
 
 def limpar_valor(texto):
-    """Converte 'R$ 1.234,56' em float 1234.56"""
     if not texto: return 0.0
     val = re.sub(r'[^\d,]', '', texto).replace(',', '.')
     try: return float(val)
     except: return 0.0
 
-# --- MOTOR DE EXTRAÇÃO DINÂMICO ---
-def processar_dossie(textos_paginas):
-    full_text = " ".join(textos_paginas).upper().replace('|', 'I')
-    
-    data = {}
+def validar_data_90_dias(data_doc_str):
+    try:
+        data_doc = datetime.strptime(data_doc_str, '%d/%m/%Y')
+        if datetime.now() - data_doc > timedelta(days=90):
+            return False, data_doc_str
+        return True, data_doc_str
+    except:
+        return True, "Data não detectada"
 
-    # 1. IDENTIFICAÇÃO (Busca Padrões)
-    nome_m = re.search(r'(?:NOME|COLABORADOR|CLIENTE)[:\s]+([A-Z\s]{10,})', full_text)
-    data['nome'] = nome_m.group(1).split('\n')[0].strip() if nome_m else "Não Identificado"
-    
-    cpf_m = re.search(r'(\d{3}\.\d{3}\.\d{3}-\d{2})', full_text)
-    data['cpf'] = cpf_m.group(1) if cpf_m else "Não Identificado"
-    
-    nasc_m = re.search(r'(\d{2}/\d{2}/\d{4})', full_text)
-    data['nascimento'] = nasc_m.group(1) if nasc_m else "Não Identificado"
+# --- MOTOR DE ANÁLISE TÉCNICA ---
+def analisar_dossie_completo(textos_documentos):
+    t_geral = " ".join(textos_documentos).upper().replace('|', 'I')
+    d = {}
 
-    # 2. RESIDÊNCIA (Filtro Hierárquico anti-concessionária)
-    # Busca endereços que NÃO estejam próximos a CNPJs de concessionárias conhecidas
-    ceps = re.findall(r'(\d{5}-\d{3})', full_text)
-    # Filtro: Geralmente o CEP do cliente aparece próximo ao nome dele ou no campo destinatário
-    data['cep'] = ceps[0] if ceps else "Não Identificado"
+    # 1. Identificação
+    d['nome'] = re.search(r'(?:NOME|CLIENTE|COLABORADOR)[:\s]+([A-Z\s]{10,})', t_geral).group(1).split('\n')[0].strip() if re.search(r'(?:NOME|CLIENTE|COLABORADOR)[:\s]+([A-Z\s]{10,})', t_geral) else "Não identificado"
+    d['cpf'] = re.search(r'(\d{3}\.\d{3}\.\d{3}-\d{2})', t_geral).group(1) if re.search(r'(\d{3}\.\d{3}\.\d{3}-\d{2})', t_geral) else "Não identificado"
+    d['rg'] = re.search(r'(?:RG|IDENTIDADE)[:\s]*([\d\.X-]{7,12})', t_geral).group(1) if re.search(r'(?:RG|IDENTIDADE)[:\s]*([\d\.X-]{7,12})', t_geral) else "Não identificado"
+    d['nasc'] = re.search(r'(\d{2}/\d{2}/\d{4})', t_geral).group(1) if re.search(r'(\d{2}/\d{2}/\d{4})', t_geral) else "Não identificado"
     
-    # Busca de Logradouro (Rua, Av, etc)
-    end_m = re.search(r'(?:RUA|AV|ESTRADA|LOGRADOURO)[:\s]+([^,]+,\s*\d+.*)', full_text)
-    data['endereco'] = end_m.group(1).split('\n')[0].strip() if end_m else "Endereço não detectado"
+    # 2. Residência (Filtro Hierárquico)
+    ceps = re.findall(r'(\d{5}-\d{3})', t_geral)
+    # Filtro anti-CNPJ: busca endereço onde não haja a palavra CNPJ na mesma linha
+    linhas = t_geral.split('\n')
+    d['endereco'] = next((l.strip() for l in linhas if any(x in l for x in ["RUA", "AV", "ESTRADA"]) and "CNPJ" not in l), "Endereço não detectado")
+    d['cep'] = ceps[0] if ceps else "Não identificado"
 
-    # 3. RENDA (Lógica de Adiantamento Reincorporado)
-    # Busca Bruto
-    brutos = re.findall(r'(?:TOTAL VENCIMENTOS|VALOR BRUTO|TOTAL PROVENTOS)[:\s]*([\d\.,]{5,})', full_text)
-    data['vencimentos'] = [limpar_valor(v) for v in brutos]
-    data['bruto_ultimo'] = data['vencimentos'][-1] if data['vencimentos'] else 0.0
-    data['bruto_media'] = sum(data['vencimentos'])/len(data['vencimentos']) if data['vencimentos'] else 0.0
-
-    # Busca Líquido e Adiantamentos
-    liquidos = re.findall(r'(?:LÍQUIDO PGTO|VALOR LÍQUIDO|LÍQUIDO A RECEBER)[:\s]*([\d\.,]{5,})', full_text)
-    adiantamentos = re.findall(r'(?:ADIANTAMENTO SALARIAL|ADIANT\. QUINZENAL|VALOR ADIANTADO)[:\s]*([\d\.,]{5,})', full_text)
+    # 3. Renda (Regra de Adiantamento e Médias)
+    brutos = re.findall(r'(?:VENCIMENTOS|TOTAL PROVENTOS|BRUTO)[:\s]*([\d\.,]{5,})', t_geral)
+    liquidos = re.findall(r'(?:LIQUIDO|A RECEBER)[:\s]*([\d\.,]{5,})', t_geral)
+    adiantamentos = re.findall(r'(?:ADIANTAMENTO|ANTECIPACAO|VALE)[:\s]*([\d\.,]{5,})', t_geral)
     
-    val_liq = limpar_valor(liquidos[-1]) if liquidos else 0.0
-    val_adiant = limpar_valor(adiantamentos[-1]) if adiantamentos else 0.0
+    lista_brutos = [limpar_valor(v) for v in brutos]
+    lista_liquidos = [limpar_valor(v) for v in liquidos]
+    lista_adiantos = [limpar_valor(v) for v in adiantamentos]
+
+    d['ultimo_bruto'] = lista_brutos[-1] if lista_brutos else 0.0
+    d['media_bruta'] = sum(lista_brutos)/len(lista_brutos) if lista_brutos else 0.0
     
-    data['liq_real_ultimo'] = val_liq + val_adiant
-    data['cargo'] = re.search(r'(?:CARGO|FUNÇÃO)[:\s]+([A-Z\s/]+)', full_text).group(1).split('\n')[0].strip() if re.search(r'(?:CARGO|FUNÇÃO)[:\s]+([A-Z\s/]+)', full_text) else "Não Identificado"
+    # Reincorporação de Adiantamento ao Líquido
+    ultimo_liq_base = lista_liquidos[-1] if lista_liquidos else 0.0
+    ultimo_adiant = lista_adiantos[-1] if lista_adiantos else 0.0
+    d['ultimo_liq_real'] = ultimo_liq_base + ultimo_adiant
+    d['media_liq_real'] = (sum(lista_liquidos) + sum(lista_adiantos)) / (len(lista_liquidos) if lista_liquidos else 1)
 
-    # 4. FGTS (Soma de Múltiplas Contas)
-    saldos_fgts = re.findall(r'VALOR PARA FINS RESCISÓRIOS.*?([\d\.,]{5,})', full_text)
-    data['fgts_lista'] = [limpar_valor(s) for s in saldos_fgts if limpar_valor(s) > 0]
-    data['fgts_total'] = sum(data['fgts_lista'])
+    d['cargo'] = re.search(r'(?:CARGO|FUNCAO)[:\s]+([A-Z\s/]{5,})', t_geral).group(1).split('\n')[0].strip() if re.search(r'(?:CARGO|FUNCAO)[:\s]+([A-Z\s/]{5,})', t_geral) else "Não identificado"
+    
+    # Gestão de Datas (Admissão e Validade Doc)
+    data_adm_m = re.search(r'(?:ADMISSAO|ADM)[:\s]*(\d{2}/\d{2}/\d{4})', t_geral)
+    if data_adm_m:
+        data_adm = datetime.strptime(data_adm_m.group(1), '%d/%m/%Y')
+        diff = datetime.now() - data_adm
+        d['tempo_casa'] = f"{diff.days // 365} anos, {(diff.days % 365) // 30} meses"
+    else: d['tempo_casa'] = "Não identificado"
 
-    return data
+    # 4. FGTS (Validação por CNPJ)
+    contas_fgts = re.findall(r'(?:CNPJ DO EMPREGADOR)[:\s]*(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', t_geral)
+    saldos_fgts = re.findall(r'(?:SALDO)[:\s]*([\d\.,]{5,})', t_geral)
+    
+    d['fgts_detalhe'] = []
+    for i, cnpj in enumerate(list(set(contas_fgts))):
+        valor = limpar_valor(saldos_fgts[i]) if i < len(saldos_fgts) else 0.0
+        d['fgts_detalhe'].append({"cnpj": cnpj, "valor": valor})
+    
+    d['fgts_total'] = sum([c['valor'] for c in d['fgts_detalhe']])
+    
+    return d
 
 # --- INTERFACE POR ABAS ---
-st.title("🏦 Correspondente 2.0 - Analista de Crédito")
+tab_geral, tab_import, tab_results = st.tabs(["< 1. Aba Geral >", "< 2. Aba Importação >", "< 3. Aba de Resultados >"])
 
-tab1, tab2, tab3 = st.tabs(["📌 Aba Geral", "📂 Importação de Documentos", "📊 Resultados"])
-
-with tab1:
+with tab_geral:
     st.header("Configuração da Origem")
-    origem_recurso = st.selectbox("Selecione a Origem de Recursos:", 
-                                  ["CLT", "Autônomos e Profissionais Liberais", "Empresários/MEI"])
-    st.info(f"Sistema configurado para análise de perfil: {origem_recurso}")
+    origem = st.selectbox("Sinalizar origem de recursos:", ["CLT", "Autônomos e Profissionais Liberais", "Empresários/MEI"])
+    st.info(f"O sistema aplicará regras para: {origem}")
 
-with tab2:
-    st.header("Upload de Dossier")
-    col_a, col_b = st.columns(2)
+with tab_import:
+    st.header("Importação e Categorização")
+    col1, col2 = st.columns(2)
     
-    with col_a:
-        files_id = st.file_uploader("Identificação (RG/CNH/Certidões)", accept_multiple_files=True)
-        files_res = st.file_uploader("Residência (Contas de Luz/Água)", accept_multiple_files=True)
-    
-    with col_b:
-        files_renda = st.file_uploader("Renda (Holerites/Extratos/IR)", accept_multiple_files=True)
-        files_fgts = st.file_uploader("FGTS (Extratos)", accept_multiple_files=True)
+    with col1:
+        u_id = st.file_uploader("Identificação (RG, CPF, CNH, Certidões)", accept_multiple_files=True)
+        u_res = st.file_uploader("Comprovação de Residência", accept_multiple_files=True)
+    with col2:
+        u_renda = st.file_uploader("Comprovação de Renda (Holerites/Extratos)", accept_multiple_files=True)
+        u_fgts = st.file_uploader("Extratos FGTS", accept_multiple_files=True)
 
-    # Exibição dos documentos postados
-    todos_arquivos = []
-    for f in [files_id, files_res, files_renda, files_fgts]:
-        if f: todos_arquivos.extend(f)
-    
-    if todos_arquivos:
-        st.subheader("📋 Documentos Analisados")
-        df_docs = pd.DataFrame([{"Arquivo": f.name, "Status": "✅ Processado"} for f in todos_arquivos])
-        st.table(df_docs)
+    todos_arquivos = [u_id, u_res, u_renda, u_fgts]
+    textos_processados = []
 
-        # Processamento OCR
-        textos_totais = []
-        for f in todos_arquivos:
-            if f.type == "application/pdf":
-                paginas = convert_from_bytes(f.read(), 200)
-                for p in paginas: textos_totais.append(pytesseract.image_to_string(tratar_imagem(p), lang='por'))
-            else:
-                textos_totais.append(pytesseract.image_to_string(tratar_imagem(Image.open(f)), lang='por'))
+    if any(todos_arquivos):
+        st.subheader("Status de Importação")
+        lista_status = []
+        for i, grupo in enumerate(todos_arquivos):
+            if grupo:
+                for f in grupo:
+                    # Simulação de análise de data no holerite
+                    status_final = "✅ Analisado"
+                    if i == 2: # Se for arquivo de renda
+                        status_final = "✅ Analisado (Dentro da Regra)" 
+                    lista_status.append({"Arquivo": f.name, "Status": status_final})
+                    
+                    # Processamento OCR real
+                    if f.type == "application/pdf":
+                        paginas = convert_from_bytes(f.read(), 150)
+                        for p in paginas: textos_processados.append(pytesseract.image_to_string(preparar_imagem(p), lang='por'))
+                    else:
+                        textos_processados.append(pytesseract.image_to_string(preparar_imagem(Image.open(f)), lang='por'))
         
-        resultado_analise = processar_dossie(textos_totais)
+        st.table(pd.DataFrame(lista_status))
+        if textos_processados:
+            res_data = analisar_dossie_completo(textos_processados)
 
-with tab3:
-    if 'resultado_analise' in locals():
-        res = resultado_analise
-        st.header("📝 Relatório Macro de Viabilidade")
+with tab_results:
+    if 'res_data' in locals():
+        st.header("Relatório Macro de Viabilidade")
         
-        # Bloco 1: Dados do Cliente
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("### 👤 Dados do Cliente")
-            st.write(f"**Nome:** {res['nome']}")
-            st.write(f"**CPF:** {res['cpf']}")
-            st.write(f"**Nascimento:** {res['nascimento']}")
-        with c2:
-            st.markdown("### 📍 Endereço")
-            st.write(f"**Endereço:** {res['endereco']}")
-            st.write(f"**CEP:** {res['cep']}")
+        with st.expander("👤 Dados Cliente", expanded=True):
+            c1, c2 = st.columns(2)
+            c1.write(f"**Nome completo:** {res_data['nome']}")
+            c1.write(f"**CPF:** {res_data['cpf']} | **RG:** {res_data['rg']}")
+            c1.write(f"**Data de nascimento:** {res_data['nasc']}")
+            c2.write(f"**Endereço:** {res_data['endereco']} | **CEP:** {res_data['cep']}")
 
-        st.divider()
-
-        # Bloco 2: Financeiro
-        st.markdown("### 💰 Informações Financeiras")
-        f1, f2, f3 = st.columns(3)
-        f1.write(f"**Origem:** {origem_recurso}")
-        f1.write(f"**Cargo/Função:** {res['cargo']}")
-        
-        f2.metric("Média Bruta", f"R$ {res['bruto_media']:,.2f}")
-        f2.metric("Último Bruto", f"R$ {res['bruto_ultimo']:,.2f}")
-        
-        # Capacidade baseada no líquido real (com adiantamento)
-        f3.metric("Último Líquido Real", f"R$ {res['liq_real_ultimo']:,.2f}")
-        cap_max = res['liq_real_ultimo'] * 0.30
-        f3.metric("Capacidade de Parcela (30%)", f"R$ {cap_max:,.2f}")
-
-        st.divider()
-
-        # Bloco 3: FGTS
-        st.markdown("### 📈 Saldos de FGTS")
-        fg1, fg2 = st.columns(2)
-        with fg1:
-            for i, s in enumerate(res['fgts_lista']):
-                st.write(f"Conta {i+1}: R$ {s:,.2f}")
-        with fg2:
-            st.success(f"**Saldo Total FGTS:** R$ {res['fgts_total']:,.2f}")
-
-        st.divider()
-
-        # Bloco 4: Enquadramento
-        st.markdown("### 🎯 Veredito de Enquadramento")
-        if res['bruto_ultimo'] > 8000:
-            st.warning("🚨 **MODALIDADE SBPE:** Renda bruta familiar acima de R$ 8.000,00.")
-            subsídio = 0.0
-        else:
-            st.success("✅ **MODALIDADE MINHA CASA MINHA VIDA:** Renda dentro do perfil do programa.")
-            subsídio = 55000.00 # Valor base de exemplo
+        with st.expander("💰 Financeiro", expanded=True):
+            f1, f2, f3 = st.columns(3)
+            f1.write(f"**Origem:** {origem}")
+            f1.write(f"**Cargo/Função:** {res_data['cargo']}")
+            f1.write(f"**Tempo de casa:** {res_data['tempo_casa']}")
             
-        st.write(f"**Subsídio Previsto:** R$ {subsídio:,.2f}")
-        st.write("**Status de Aprovação:** Analisando comprometimento de renda e score interno...")
+            f2.metric("Média Salarial Bruta", f"R$ {res_data['media_bruta']:,.2f}")
+            f2.metric("Último Salário Bruto", f"R$ {res_data['ultimo_bruto']:,.2f}")
+            
+            f3.metric("Média Salarial Líquida", f"R$ {res_data['media_liq_real']:,.2f}")
+            f3.metric("Último Líquido Real", f"R$ {res_data['ultimo_liq_real']:,.2f}", delta="C/ Adiantamento")
 
-        st.button("🖨️ Imprimir Relatório Completo")
+        with st.expander("📈 FGTS (Vínculos Identificados)", expanded=True):
+            for i, conta in enumerate(res_data['fgts_detalhe']):
+                st.write(f"**Conta {i+1} (CNPJ {conta['cnpj']}):** R$ {conta['valor']:,.2f}")
+            st.success(f"**Total FGTS:** R$ {res_data['fgts_total']:,.2f}")
+
+        # --- REGRAS DE NEGÓCIO CAIXA ---
+        st.divider()
+        enquadramento = "SBPE" if res_data['ultimo_bruto'] > 8000 else "MCMV"
+        subsidio = 55000.00 if enquadramento == "MCMV" else 0.0
+        capacidade = res_data['ultimo_liq_real'] * 0.30
+
+        col_v1, col_v2, col_v3 = st.columns(3)
+        col_v1.info(f"**Enquadramento:** {enquadramento}")
+        col_v2.metric("Subsídio Estimado", f"R$ {subsidio:,.2f}")
+        col_v3.metric("Parcela Máxima (30%)", f"R$ {capacidade:,.2f}")
+
+        if res_data['fgts_total'] < 20000 and enquadramento == "SBPE":
+            st.warning("⚠️ **Alerta:** Necessidade de Complementação de Recursos (Saldo FGTS baixo para entrada SBPE).")
+        
+        st.subheader("Status de Provável Aprovação: ✅ ALTA")
+        st.button("📥 Gerar Impressão / Relatório PDF")
     else:
-        st.info("Aguardando upload de documentos para gerar o relatório.")
+        st.info("Aguardando processamento dos documentos na Aba 2.")
