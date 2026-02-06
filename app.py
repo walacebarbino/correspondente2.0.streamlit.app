@@ -1,10 +1,11 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
+import random
 import plotly.express as px
 
-# --- 1. CONFIGURAÇÕES E BANCO DE DADOS ---
+# --- 1. CONFIGURAÇÕES E CONEXÃO ---
 st.set_page_config(page_title="CRM Correspondente 2.0", layout="wide")
 
 def conectar_bd():
@@ -22,79 +23,98 @@ def conectar_bd():
     conn.commit()
     return conn
 
-# --- 2. FUNÇÕES DE APOIO ---
-def salvar_processo(nome, cpf, status, valor, obs, data=None):
+# --- 2. FUNÇÃO PARA GERAR CARTEIRA FICTÍCIA (Início de 2026) ---
+def gerar_carteira_2026():
     conn = conectar_bd()
     c = conn.cursor()
-    data_final = data if data else datetime.now().date()
-    pendencia = "Sim" if status == "Inconformidade" else "Não"
-    c.execute("""INSERT INTO processos (data_entrada, cliente, cpf, status, pendencia, valor_financiamento, obs) 
-                 VALUES (?,?,?,?,?,?,?)""", (data_final, nome, cpf, status, pendencia, valor, obs))
+    c.execute("DELETE FROM processos") # Limpa para inserir a nova carteira
+    
+    nomes = ["Walace Barbino", "Ana Paula", "Ricardo Mello", "Sonia Oliveira", "Bruno Henrique", 
+             "Carla Diaz", "Marcos Frota", "Julia Roberts", "Fernando Pessoa", "Clarice Lispector"]
+    status_opcoes = ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"]
+    
+    data_base = datetime(2026, 1, 1)
+    
+    for i in range(24): # Gera os 24 clientes solicitados
+        data_random = data_base + timedelta(days=random.randint(0, 36)) # Distribuídos em Jan/Fev 2026
+        nome = random.choice(nomes) + f" {i+1}"
+        status = random.choice(status_opcoes)
+        valor = random.uniform(150000, 450000)
+        c.execute("""INSERT INTO processos (data_entrada, cliente, cpf, status, pendencia, valor_financiamento, obs) 
+                     VALUES (?,?,?,?,?,?,?)""", 
+                  (data_random.date(), nome, f"000.000.000-{i:02}", status, 
+                   "Sim" if status == "Inconformidade" else "Não", valor, "Carga automática de sistema"))
+    
     conn.commit()
     conn.close()
 
-# --- 3. INTERFACE LATERAL (CADASTRO) ---
-st.sidebar.header("📥 Novo Atendimento")
+# --- 3. FUNÇÃO PARA DELETAR CLIENTE ---
+def deletar_cliente(id_cliente):
+    conn = conectar_bd()
+    c = conn.cursor()
+    c.execute("DELETE FROM processos WHERE id = ?", (id_cliente,))
+    conn.commit()
+    conn.close()
+
+# --- 4. INTERFACE LATERAL (CADASTRO) ---
+st.sidebar.header("📥 Gestão de Dados")
+if st.sidebar.button("🚀 Gerar Carteira 24 Clientes (2026)"):
+    gerar_carteira_2026()
+    st.sidebar.success("Carteira de 2026 inserida!")
+    st.rerun()
+
 with st.sidebar.form("form_cadastro"):
+    st.subheader("Novo Cadastro Manual")
     nome = st.text_input("Nome do Cliente")
     cpf = st.text_input("CPF")
-    valor = st.number_input("Valor do Financiamento", min_value=0.0, step=1000.0)
-    status_ini = st.selectbox("Status Inicial", ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"])
-    data_retroativa = st.date_input("Data de Entrada", datetime.now())
-    obs = st.text_area("Observações")
-    
-    if st.form_submit_button("Cadastrar no Fluxo"):
-        if nome and cpf:
-            salvar_processo(nome, cpf, status_ini, valor, obs, data_retroativa)
-            st.success("Registrado!")
-        else:
-            st.error("Preencha Nome e CPF.")
+    valor = st.number_input("Valor", min_value=0.0)
+    status_ini = st.selectbox("Status", ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"])
+    data_ent = st.date_input("Data", datetime.now())
+    if st.form_submit_button("Cadastrar"):
+        conn = conectar_bd()
+        c = conn.cursor()
+        c.execute("INSERT INTO processos (data_entrada, cliente, cpf, status, pendencia, valor_financiamento) VALUES (?,?,?,?,?,?)",
+                  (data_ent, nome, cpf, status_ini, "Sim" if status_ini == "Inconformidade" else "Não", valor))
+        conn.commit()
+        st.rerun()
 
-# --- 4. DASHBOARD DE BI ---
-st.title("📊 BI e Gestão de Fluxo")
+# --- 5. DASHBOARD DE BI ---
+st.title("📊 BI e Gestão de Fluxo - Carteira 2026")
 
 conn = conectar_bd()
 df = pd.read_sql_query("SELECT * FROM processos", conn)
 conn.close()
 
 if not df.empty:
-    # Métricas principais
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total de Dossiês", len(df))
-    m2.metric("Em Inconformidade", len(df[df['status'] == 'Inconformidade']), delta_color="inverse")
+    m1.metric("Total Dossiês", len(df))
+    m2.metric("Inconformidades", len(df[df['status'] == 'Inconformidade']), delta_color="inverse")
     m3.metric("Processos Pagos", len(df[df['status'] == 'Pago']))
-    m4.metric("Volume Total (R$)", f"{df['valor_financiamento'].sum():,.2f}")
+    m4.metric("Total Financiado", f"R$ {df['valor_financiamento'].sum():,.2f}")
 
     # Gráficos
-    col_chart1, col_chart2 = st.columns(2)
-    
-    with col_chart1:
-        st.subheader("Processos por Etapa")
-        fig_status = px.bar(df['status'].value_counts().reset_index(), x='status', y='count', 
-                            labels={'count':'Qtd', 'status':'Etapa'}, color='status')
-        st.plotly_chart(fig_status, use_container_width=True)
-
-    with col_chart2:
-        st.subheader("Evolução Mensal (Entradas)")
+    c_left, c_right = st.columns(2)
+    with c_left:
+        fig_bar = px.bar(df['status'].value_counts().reset_index(), x='status', y='count', title="Funil de Vendas", color='status')
+        st.plotly_chart(fig_bar, use_container_width=True)
+    with c_right:
         df['data_entrada'] = pd.to_datetime(df['data_entrada'])
-        df_mes = df.resample('M', on='data_entrada').size().reset_index(name='qtd')
-        fig_mes = px.line(df_mes, x='data_entrada', y='qtd', markers=True)
-        st.plotly_chart(fig_mes, use_container_width=True)
+        df_evolucao = df.groupby(df['data_entrada'].dt.date).size().reset_index(name='qtd')
+        fig_line = px.line(df_evolucao, x='data_entrada', y='qtd', title="Entrada de Clientes em 2026", markers=True)
+        st.plotly_chart(fig_line, use_container_width=True)
 
-    # --- 5. TABELA DE GESTÃO ---
+    # --- 6. TABELA COM FUNÇÃO DELETAR ---
     st.divider()
-    st.subheader("📋 Lista Geral de Atendimentos")
+    st.subheader("📋 Gestão da Carteira")
     
-    # Filtro rápido
-    filtro = st.multiselect("Filtrar Status:", df['status'].unique(), default=df['status'].unique())
-    df_f = df[df['status'].isin(filtro)]
-    
-    # Exibição estilizada
-    def style_status(val):
-        color = '#ff4b4b' if val == 'Inconformidade' else '#00cc66' if val == 'Pago' else None
-        return f'background-color: {color}' if color else ''
-
-    st.dataframe(df_f.style.applymap(style_status, subset=['status']), use_container_width=True)
-
+    for index, row in df.iterrows():
+        cols = st.columns([3, 2, 2, 2, 1])
+        cols[0].write(row['cliente'])
+        cols[1].write(row['status'])
+        cols[2].write(f"R$ {row['valor_financiamento']:,.2f}")
+        cols[3].write(row['data_entrada'])
+        if cols[4].button("🗑️", key=f"del_{row['id']}"):
+            deletar_cliente(row['id'])
+            st.rerun()
 else:
-    st.info("Nenhum dado cadastrado. Use o menu lateral para iniciar seu fluxo desde Janeiro.")
+    st.warning("Nenhum dado cadastrado. Use o botão na lateral para gerar a carteira de 2026.")
