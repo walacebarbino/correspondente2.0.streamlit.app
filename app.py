@@ -4,15 +4,13 @@ import sqlite3
 from datetime import datetime, timedelta
 import random
 import plotly.express as px
-import os
+from io import BytesIO
 
 # --- 1. CONFIGURAÇÕES E CONEXÃO ---
 st.set_page_config(page_title="CRM Correspondente 2.0", layout="wide")
 
-DB_NOME = 'fluxo_caixa.db'
-
 def conectar_bd():
-    conn = sqlite3.connect(DB_NOME)
+    conn = sqlite3.connect('fluxo_caixa.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS processos 
                  (id INTEGER PRIMARY KEY, 
@@ -27,6 +25,13 @@ def conectar_bd():
     return conn
 
 # --- 2. FUNÇÕES DE BANCO DE DADOS ---
+def deletar_cliente(id_cliente):
+    conn = conectar_bd()
+    c = conn.cursor()
+    c.execute("DELETE FROM processos WHERE id = ?", (id_cliente,))
+    conn.commit()
+    conn.close()
+
 def gerar_carteira_2026():
     conn = conectar_bd()
     c = conn.cursor()
@@ -45,31 +50,13 @@ def gerar_carteira_2026():
     conn.commit()
     conn.close()
 
-def deletar_cliente(id_cliente):
-    conn = conectar_bd()
-    c = conn.cursor()
-    c.execute("DELETE FROM processos WHERE id = ?", (id_cliente,))
-    conn.commit()
-    conn.close()
-
 # --- 3. INTERFACE LATERAL ---
 st.sidebar.header("📥 Gestão de Dados")
 if st.sidebar.button("🚀 Gerar Carteira 24 Clientes (2026)"):
     gerar_carteira_2026()
-    st.sidebar.success("Carteira de 2026 inserida!")
     st.rerun()
 
-# --- 4. EXPORTAÇÃO DO ARQUIVO .DB (PEDIDO) ---
-if os.path.exists(DB_NOME):
-    with open(DB_NOME, "rb") as f:
-        st.sidebar.download_button(
-            label="💾 Baixar Banco de Dados (.db)",
-            data=f,
-            file_name=DB_NOME,
-            mime="application/octet-stream"
-        )
-
-# --- 5. PROCESSAMENTO E BI ---
+# --- 4. PROCESSAMENTO DE DADOS E BI ---
 conn = conectar_bd()
 df = pd.read_sql_query("SELECT * FROM processos", conn)
 conn.close()
@@ -77,6 +64,21 @@ conn.close()
 st.title("📊 BI e Gestão de Fluxo - Carteira 2026")
 
 if not df.empty:
+    # --- BOTÃO DE EXPORTAÇÃO (NOVO) ---
+    st.sidebar.subheader("💾 Backup e Relatórios")
+    
+    # Prepara o arquivo Excel em memória
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Carteira_2026')
+    
+    st.sidebar.download_button(
+        label="Download Excel para Google Drive",
+        data=output.getvalue(),
+        file_name=f"relatorio_correspondente_{datetime.now().strftime('%Y%m%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
     # Indicadores de Topo
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total Dossiês", len(df))
@@ -95,7 +97,7 @@ if not df.empty:
         fig_line = px.line(df_evolucao, x='data_entrada', y='qtd', title="Entradas em 2026", markers=True)
         st.plotly_chart(fig_line, use_container_width=True)
 
-    # --- 6. TABELA COM FUNÇÃO DELETAR ---
+    # --- 5. TABELA COM FUNÇÃO DELETAR ---
     st.divider()
     st.subheader("📋 Gestão da Carteira")
     for index, row in df.iterrows():
