@@ -1,120 +1,103 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
-from datetime import datetime, timedelta
-import random
 import plotly.express as px
+from datetime import datetime
+import io
 
-# --- 1. CONFIGURAÇÕES E CONEXÃO ---
+# --- 1. CONFIGURAÇÕES ---
 st.set_page_config(page_title="CRM Correspondente 2.0", layout="wide")
 
-def conectar_bd():
-    conn = sqlite3.connect('fluxo_caixa.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS processos 
-                 (id INTEGER PRIMARY KEY, 
-                  data_entrada DATE, 
-                  cliente TEXT, 
-                  cpf TEXT,
-                  status TEXT, 
-                  pendencia TEXT, 
-                  valor_financiamento REAL,
-                  obs TEXT)''')
-    conn.commit()
-    return conn
+# Inicializa o estado da base de dados se não existir
+if 'db_caixa' not in st.session_state:
+    # Estrutura exata da sua planilha do OneDrive
+    st.session_state.db_caixa = pd.DataFrame(columns=[
+        "DATA", "Nome do Comprador", "CPF", 
+        "Nome do Imóvel / Construtora", "Valor (R$)", 
+        "Imobiliária", "Status"
+    ])
 
-# --- 2. FUNÇÃO PARA GERAR CARTEIRA FICTÍCIA (Início de 2026) ---
-def gerar_carteira_2026():
-    conn = conectar_bd()
-    c = conn.cursor()
-    c.execute("DELETE FROM processos") # Limpa para inserir a nova carteira
-    
-    nomes = ["Walace Barbino", "Ana Paula", "Ricardo Mello", "Sonia Oliveira", "Bruno Henrique", 
-             "Carla Diaz", "Marcos Frota", "Julia Roberts", "Fernando Pessoa", "Clarice Lispector"]
-    status_opcoes = ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"]
-    
-    data_base = datetime(2026, 1, 1)
-    
-    for i in range(24): # Gera os 24 clientes solicitados
-        data_random = data_base + timedelta(days=random.randint(0, 36)) # Distribuídos em Jan/Fev 2026
-        nome = random.choice(nomes) + f" {i+1}"
-        status = random.choice(status_opcoes)
-        valor = random.uniform(150000, 450000)
-        c.execute("""INSERT INTO processos (data_entrada, cliente, cpf, status, pendencia, valor_financiamento, obs) 
-                     VALUES (?,?,?,?,?,?,?)""", 
-                  (data_random.date(), nome, f"000.000.000-{i:02}", status, 
-                   "Sim" if status == "Inconformidade" else "Não", valor, "Carga automática de sistema"))
-    
-    conn.commit()
-    conn.close()
+df = st.session_state.db_caixa
 
-# --- 3. FUNÇÃO PARA DELETAR CLIENTE ---
-def deletar_cliente(id_cliente):
-    conn = conectar_bd()
-    c = conn.cursor()
-    c.execute("DELETE FROM processos WHERE id = ?", (id_cliente,))
-    conn.commit()
-    conn.close()
-
-# --- 4. INTERFACE LATERAL (CADASTRO) ---
+# --- 2. INTERFACE LATERAL (CADASTRO MANUAL) ---
 st.sidebar.header("📥 Gestão de Dados")
-if st.sidebar.button("🚀 Gerar Carteira 24 Clientes (2026)"):
-    gerar_carteira_2026()
-    st.sidebar.success("Carteira de 2026 inserida!")
-    st.rerun()
 
-with st.sidebar.form("form_cadastro"):
-    st.subheader("Novo Cadastro Manual")
-    nome = st.text_input("Nome do Cliente")
+with st.sidebar.form("novo_cadastro"):
+    st.subheader("Novo Cadastro")
+    data_cad = st.date_input("DATA", datetime.now())
+    nome = st.text_input("Nome do Comprador")
     cpf = st.text_input("CPF")
-    valor = st.number_input("Valor", min_value=0.0)
-    status_ini = st.selectbox("Status", ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"])
-    data_ent = st.date_input("Data", datetime.now())
-    if st.form_submit_button("Cadastrar"):
-        conn = conectar_bd()
-        c = conn.cursor()
-        c.execute("INSERT INTO processos (data_entrada, cliente, cpf, status, pendencia, valor_financiamento) VALUES (?,?,?,?,?,?)",
-                  (data_ent, nome, cpf, status_ini, "Sim" if status_ini == "Inconformidade" else "Não", valor))
-        conn.commit()
-        st.rerun()
+    imovel = st.text_input("Nome do Imóvel / Construtora")
+    valor = st.number_input("Valor (R$)", min_value=0.0, step=1000.0)
+    imobiliaria = st.text_input("Imobiliária")
+    status = st.selectbox("Status", [
+        "Triagem", "Análise Manual", "Montagem PAC", 
+        "Inconformidade", "Aprovado", "Pago"
+    ])
+    
+    if st.form_submit_button("Salvar no Fluxo"):
+        if nome and cpf:
+            nova_linha = pd.DataFrame([{
+                "DATA": data_cad.strftime('%d/%m/%Y'),
+                "Nome do Comprador": nome,
+                "CPF": cpf,
+                "Nome do Imóvel / Construtora": imovel,
+                "Valor (R$)": valor,
+                "Imobiliária": imobiliaria,
+                "Status": status
+            }])
+            st.session_state.db_caixa = pd.concat([st.session_state.db_caixa, nova_linha], ignore_index=True)
+            st.success(f"Dossiê de {nome} registrado!")
+            st.rerun()
 
-# --- 5. DASHBOARD DE BI ---
+# --- 3. DASHBOARD DE BI ---
 st.title("📊 BI e Gestão de Fluxo - Carteira 2026")
 
-conn = conectar_bd()
-df = pd.read_sql_query("SELECT * FROM processos", conn)
-conn.close()
-
 if not df.empty:
+    # Métricas de Topo
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total Dossiês", len(df))
-    m2.metric("Inconformidades", len(df[df['status'] == 'Inconformidade']), delta_color="inverse")
-    m3.metric("Processos Pagos", len(df[df['status'] == 'Pago']))
-    m4.metric("Total Financiado", f"R$ {df['valor_financiamento'].sum():,.2f}")
+    m2.metric("Inconformidades", len(df[df['Status'] == 'Inconformidade']))
+    m3.metric("Processos Pagos", len(df[df['Status'] == 'Pago']))
+    m4.metric("Volume Faturado", f"R$ {df[df['Status'] == 'Pago']['Valor (R$)'].sum():,.2f}")
 
     # Gráficos
     c_left, c_right = st.columns(2)
     with c_left:
-        fig_bar = px.bar(df['status'].value_counts().reset_index(), x='status', y='count', title="Funil de Vendas", color='status')
+        fig_bar = px.bar(df['Status'].value_counts().reset_index(), 
+                         x='Status', y='count', color='Status', 
+                         title="Dossiês por Etapa")
         st.plotly_chart(fig_bar, use_container_width=True)
-    with c_right:
-        df['data_entrada'] = pd.to_datetime(df['data_entrada'])
-        df_evolucao = df.groupby(df['data_entrada'].dt.date).size().reset_index(name='qtd')
-        fig_line = px.line(df_evolucao, x='data_entrada', y='qtd', title="Entrada de Clientes em 2026", markers=True)
-        st.plotly_chart(fig_line, use_container_width=True)
-
-    # --- 6. TABELA COM FUNÇÃO DELETAR ---
-    st.divider()
-    st.subheader("📋 Gestão da Carteira")
     
+    with c_right:
+        fig_imo = px.pie(df, names='Imobiliária', values='Valor (R$)', 
+                         title="Volume por Imobiliária")
+        st.plotly_chart(fig_imo, use_container_width=True)
+
+    # --- 4. EXPORTAÇÃO E TABELA ---
+    st.divider()
+    
+    # Preparação do arquivo para sua pasta CORRESPONDENTE2.0 no OneDrive
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False)
+    
+    st.download_button(
+        label="💾 Baixar Planilha Atualizada para OneDrive",
+        data=output.getvalue(),
+        file_name="database_correspondente.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    st.subheader("📋 Gestão da Carteira")
     for index, row in df.iterrows():
-        cols = st.columns([3, 2, 2, 2, 1])
-        cols[0].write(row['cliente'])
-        cols[1].write(row['status'])
-        cols[2].write(f"R$ {row['valor_financiamento']:,.2f}")
-        cols[3].write(row['data_entrada'])
-        if cols[4].button("🗑️", key=f"del_{row['id']}"):
-            deletar_cliente(row['id'])
+        cols = st.columns([2, 2, 2, 2, 1, 1])
+        cols[0].write(f"**{row['Nome do Comprador']}**")
+        cols[1].write(row['Status'])
+        cols[2].write(row['Imobiliária'])
+        cols[3].write(f"R$ {row['Valor (R$)']:,.2f}")
+        cols[4].write(row['DATA'])
+        if cols[5].button("🗑️", key=f"del_{index}"):
+            st.session_state.db_caixa = df.drop(index)
             st.rerun()
 else:
-    st.warning("Nenhum dado cadastrado. Use o botão na lateral para gerar a carteira de 2026.")
+    st.info("Sistema pronto. Utilize a barra lateral para cadastrar os clientes conforme sua planilha do OneDrive.")
