@@ -4,6 +4,7 @@ import sqlite3
 from datetime import datetime, timedelta
 import random
 import plotly.express as px
+from io import BytesIO
 
 # --- 1. CONFIGURAÇÕES E CONEXÃO ---
 st.set_page_config(page_title="CRM Correspondente 2.0", layout="wide")
@@ -23,32 +24,7 @@ def conectar_bd():
     conn.commit()
     return conn
 
-# --- 2. FUNÇÃO PARA GERAR CARTEIRA FICTÍCIA (Início de 2026) ---
-def gerar_carteira_2026():
-    conn = conectar_bd()
-    c = conn.cursor()
-    c.execute("DELETE FROM processos") # Limpa para inserir a nova carteira
-    
-    nomes = ["Walace Barbino", "Ana Paula", "Ricardo Mello", "Sonia Oliveira", "Bruno Henrique", 
-             "Carla Diaz", "Marcos Frota", "Julia Roberts", "Fernando Pessoa", "Clarice Lispector"]
-    status_opcoes = ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"]
-    
-    data_base = datetime(2026, 1, 1)
-    
-    for i in range(24): # Gera os 24 clientes solicitados
-        data_random = data_base + timedelta(days=random.randint(0, 36)) # Distribuídos em Jan/Fev 2026
-        nome = random.choice(nomes) + f" {i+1}"
-        status = random.choice(status_opcoes)
-        valor = random.uniform(150000, 450000)
-        c.execute("""INSERT INTO processos (data_entrada, cliente, cpf, status, pendencia, valor_financiamento, obs) 
-                     VALUES (?,?,?,?,?,?,?)""", 
-                  (data_random.date(), nome, f"000.000.000-{i:02}", status, 
-                   "Sim" if status == "Inconformidade" else "Não", valor, "Carga automática de sistema"))
-    
-    conn.commit()
-    conn.close()
-
-# --- 3. FUNÇÃO PARA DELETAR CLIENTE ---
+# --- 2. FUNÇÕES DE BANCO DE DADOS ---
 def deletar_cliente(id_cliente):
     conn = conectar_bd()
     c = conn.cursor()
@@ -56,36 +32,54 @@ def deletar_cliente(id_cliente):
     conn.commit()
     conn.close()
 
-# --- 4. INTERFACE LATERAL (CADASTRO) ---
+def gerar_carteira_2026():
+    conn = conectar_bd()
+    c = conn.cursor()
+    c.execute("DELETE FROM processos")
+    nomes = ["Walace Barbino", "Ana Paula", "Ricardo Mello", "Sonia Oliveira", "Bruno Henrique", 
+             "Carla Diaz", "Marcos Frota", "Julia Roberts", "Fernando Pessoa", "Clarice Lispector"]
+    status_opcoes = ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"]
+    data_base = datetime(2026, 1, 1)
+    for i in range(24):
+        data_random = data_base + timedelta(days=random.randint(0, 36))
+        nome = random.choice(nomes) + f" {i+1}"
+        status = random.choice(status_opcoes)
+        valor = random.uniform(150000, 450000)
+        c.execute("INSERT INTO processos (data_entrada, cliente, cpf, status, pendencia, valor_financiamento, obs) VALUES (?,?,?,?,?,?,?)", 
+                  (data_random.date(), nome, f"000.000.000-{i:02}", status, "Sim" if status == "Inconformidade" else "Não", valor, "Carga automática"))
+    conn.commit()
+    conn.close()
+
+# --- 3. INTERFACE LATERAL ---
 st.sidebar.header("📥 Gestão de Dados")
 if st.sidebar.button("🚀 Gerar Carteira 24 Clientes (2026)"):
     gerar_carteira_2026()
-    st.sidebar.success("Carteira de 2026 inserida!")
     st.rerun()
 
-with st.sidebar.form("form_cadastro"):
-    st.subheader("Novo Cadastro Manual")
-    nome = st.text_input("Nome do Cliente")
-    cpf = st.text_input("CPF")
-    valor = st.number_input("Valor", min_value=0.0)
-    status_ini = st.selectbox("Status", ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"])
-    data_ent = st.date_input("Data", datetime.now())
-    if st.form_submit_button("Cadastrar"):
-        conn = conectar_bd()
-        c = conn.cursor()
-        c.execute("INSERT INTO processos (data_entrada, cliente, cpf, status, pendencia, valor_financiamento) VALUES (?,?,?,?,?,?)",
-                  (data_ent, nome, cpf, status_ini, "Sim" if status_ini == "Inconformidade" else "Não", valor))
-        conn.commit()
-        st.rerun()
-
-# --- 5. DASHBOARD DE BI ---
-st.title("📊 BI e Gestão de Fluxo - Carteira 2026")
-
+# --- 4. PROCESSAMENTO DE DADOS E BI ---
 conn = conectar_bd()
 df = pd.read_sql_query("SELECT * FROM processos", conn)
 conn.close()
 
+st.title("📊 BI e Gestão de Fluxo - Carteira 2026")
+
 if not df.empty:
+    # --- BOTÃO DE EXPORTAÇÃO (NOVO) ---
+    st.sidebar.subheader("💾 Backup e Relatórios")
+    
+    # Prepara o arquivo Excel em memória
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Carteira_2026')
+    
+    st.sidebar.download_button(
+        label="Download Excel para Google Drive",
+        data=output.getvalue(),
+        file_name=f"relatorio_correspondente_{datetime.now().strftime('%Y%m%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    # Indicadores de Topo
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total Dossiês", len(df))
     m2.metric("Inconformidades", len(df[df['status'] == 'Inconformidade']), delta_color="inverse")
@@ -95,18 +89,17 @@ if not df.empty:
     # Gráficos
     c_left, c_right = st.columns(2)
     with c_left:
-        fig_bar = px.bar(df['status'].value_counts().reset_index(), x='status', y='count', title="Funil de Vendas", color='status')
+        fig_bar = px.bar(df['status'].value_counts().reset_index(), x='status', y='count', color='status', title="Funil de Vendas")
         st.plotly_chart(fig_bar, use_container_width=True)
     with c_right:
         df['data_entrada'] = pd.to_datetime(df['data_entrada'])
         df_evolucao = df.groupby(df['data_entrada'].dt.date).size().reset_index(name='qtd')
-        fig_line = px.line(df_evolucao, x='data_entrada', y='qtd', title="Entrada de Clientes em 2026", markers=True)
+        fig_line = px.line(df_evolucao, x='data_entrada', y='qtd', title="Entradas em 2026", markers=True)
         st.plotly_chart(fig_line, use_container_width=True)
 
-    # --- 6. TABELA COM FUNÇÃO DELETAR ---
+    # --- 5. TABELA COM FUNÇÃO DELETAR ---
     st.divider()
     st.subheader("📋 Gestão da Carteira")
-    
     for index, row in df.iterrows():
         cols = st.columns([3, 2, 2, 2, 1])
         cols[0].write(row['cliente'])
@@ -117,4 +110,4 @@ if not df.empty:
             deletar_cliente(row['id'])
             st.rerun()
 else:
-    st.warning("Nenhum dado cadastrado. Use o botão na lateral para gerar a carteira de 2026.")
+    st.warning("Nenhum dado cadastrado. Use o botão na lateral para gerar a carteira.")
