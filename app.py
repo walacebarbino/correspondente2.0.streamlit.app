@@ -2,102 +2,81 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
+import requests
 import io
 
 # --- 1. CONFIGURAÇÕES ---
 st.set_page_config(page_title="CRM Correspondente 2.0", layout="wide")
 
-# Inicializa o estado da base de dados se não existir
-if 'db_caixa' not in st.session_state:
-    # Estrutura exata da sua planilha do OneDrive
-    st.session_state.db_caixa = pd.DataFrame(columns=[
-        "DATA", "Nome do Comprador", "CPF", 
-        "Nome do Imóvel / Construtora", "Valor (R$)", 
-        "Imobiliária", "Status"
-    ])
+# COLE O SEU LINK DE PARTILHA DO ONEDRIVE AQUI
+LINK_PLANILHA = "SEU_LINK_DO_ONEDRIVE_AQUI"
 
-df = st.session_state.db_caixa
+def converter_link_onedrive(url):
+    # Função simples para tentar converter link de partilha em link de download direto
+    if "1drv.ms" in url:
+        # Se for link encurtado, esta lógica pode variar, o ideal é o link direto do arquivo
+        return url.replace("redir?", "download?").replace("view?", "download?")
+    return url
 
-# --- 2. INTERFACE LATERAL (CADASTRO MANUAL) ---
-st.sidebar.header("📥 Gestão de Dados")
+@st.cache_data(ttl=60) # Atualiza a cada 1 minuto
+def carregar_dados_nuvem(url):
+    try:
+        # Tenta ler o Excel diretamente do OneDrive
+        response = requests.get(url)
+        df = pd.read_excel(io.BytesIO(response.content))
+        return df
+    except:
+        # Se falhar (link privado), inicia base vazia com os seus cabeçalhos
+        return pd.DataFrame(columns=[
+            "DATA", "Nome do Comprador", "CPF", 
+            "Nome do Imóvel / Construtora", "Valor (R$)", 
+            "Imobiliária", "Status"
+        ])
 
-with st.sidebar.form("novo_cadastro"):
-    st.subheader("Novo Cadastro")
-    data_cad = st.date_input("DATA", datetime.now())
-    nome = st.text_input("Nome do Comprador")
-    cpf = st.text_input("CPF")
-    imovel = st.text_input("Nome do Imóvel / Construtora")
-    valor = st.number_input("Valor (R$)", min_value=0.0, step=1000.0)
-    imobiliaria = st.text_input("Imobiliária")
-    status = st.selectbox("Status", [
-        "Triagem", "Análise Manual", "Montagem PAC", 
-        "Inconformidade", "Aprovado", "Pago"
-    ])
-    
-    if st.form_submit_button("Salvar no Fluxo"):
-        if nome and cpf:
-            nova_linha = pd.DataFrame([{
-                "DATA": data_cad.strftime('%d/%m/%Y'),
-                "Nome do Comprador": nome,
-                "CPF": cpf,
-                "Nome do Imóvel / Construtora": imovel,
-                "Valor (R$)": valor,
-                "Imobiliária": imobiliaria,
-                "Status": status
-            }])
-            st.session_state.db_caixa = pd.concat([st.session_state.db_caixa, nova_linha], ignore_index=True)
-            st.success(f"Dossiê de {nome} registrado!")
-            st.rerun()
+# --- 2. CARREGAMENTO DOS DADOS ---
+# O sistema lê a planilha que você já iniciou com os 24 exemplos
+df = carregar_dados_nuvem(converter_link_onedrive(LINK_PLANILHA))
 
-# --- 3. DASHBOARD DE BI ---
-st.title("📊 BI e Gestão de Fluxo - Carteira 2026")
+st.title("📊 BI e Gestão de Fluxo - Conectado ao OneDrive")
 
+# --- 3. DASHBOARD DE BI (Baseado na sua planilha real) ---
 if not df.empty:
-    # Métricas de Topo
+    # Métricas calculadas dos dados da sua planilha
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total Dossiês", len(df))
-    m2.metric("Inconformidades", len(df[df['Status'] == 'Inconformidade']))
+    m2.metric("Em Análise", len(df[df['Status'] == 'Análise Manual']))
     m3.metric("Processos Pagos", len(df[df['Status'] == 'Pago']))
-    m4.metric("Volume Faturado", f"R$ {df[df['Status'] == 'Pago']['Valor (R$)'].sum():,.2f}")
-
-    # Gráficos
-    c_left, c_right = st.columns(2)
-    with c_left:
-        fig_bar = px.bar(df['Status'].value_counts().reset_index(), 
-                         x='Status', y='count', color='Status', 
-                         title="Dossiês por Etapa")
-        st.plotly_chart(fig_bar, use_container_width=True)
     
-    with c_right:
-        fig_imo = px.pie(df, names='Imobiliária', values='Valor (R$)', 
-                         title="Volume por Imobiliária")
-        st.plotly_chart(fig_imo, use_container_width=True)
+    # Tratamento do valor para garantir que é numérico
+    df['Valor (R$)'] = pd.to_numeric(df['Valor (R$)'], errors='coerce').fillna(0)
+    m4.metric("Volume Total", f"R$ {df['Valor (R$)'].sum():,.2f}")
 
-    # --- 4. EXPORTAÇÃO E TABELA ---
+    # Gráficos dinâmicos
+    col_a, col_b = st.columns(2)
+    with col_a:
+        fig_status = px.pie(df, names='Status', title="Estado dos Processos")
+        st.plotly_chart(fig_status, use_container_width=True)
+    
+    with col_b:
+        # Evolução baseada na coluna DATA da sua planilha
+        df['DATA'] = pd.to_datetime(df['DATA'], errors='coerce')
+        df_evol = df.groupby(df['DATA'].dt.date).size().reset_index(name='qtd')
+        fig_evol = px.line(df_evol, x='DATA', y='qtd', title="Entradas por Data", markers=True)
+        st.plotly_chart(fig_evol, use_container_width=True)
+
+    # --- 4. VISUALIZAÇÃO DA TABELA ---
     st.divider()
-    
-    # Preparação do arquivo para sua pasta CORRESPONDENTE2.0 no OneDrive
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False)
-    
-    st.download_button(
-        label="💾 Baixar Planilha Atualizada para OneDrive",
-        data=output.getvalue(),
-        file_name="database_correspondente.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-    st.subheader("📋 Gestão da Carteira")
-    for index, row in df.iterrows():
-        cols = st.columns([2, 2, 2, 2, 1, 1])
-        cols[0].write(f"**{row['Nome do Comprador']}**")
-        cols[1].write(row['Status'])
-        cols[2].write(row['Imobiliária'])
-        cols[3].write(f"R$ {row['Valor (R$)']:,.2f}")
-        cols[4].write(row['DATA'])
-        if cols[5].button("🗑️", key=f"del_{index}"):
-            st.session_state.db_caixa = df.drop(index)
-            st.rerun()
+    st.subheader("📋 Lista de Clientes (Sincronizada)")
+    st.dataframe(df, use_container_width=True)
 else:
-    st.info("Sistema pronto. Utilize a barra lateral para cadastrar os clientes conforme sua planilha do OneDrive.")
+    st.warning("Não foi possível ler os dados. Verifique se o link do OneDrive permite 'Acesso Público' ou use o cadastro manual.")
+
+# --- 5. CADASTRO (LADO ESQUERDO) ---
+with st.sidebar:
+    st.header("📥 Novo Registro")
+    with st.form("form_novo"):
+        n_nome = st.text_input("Nome do Comprador")
+        n_status = st.selectbox("Status", ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"])
+        n_valor = st.number_input("Valor (R$)", min_value=0.0)
+        if st.form_submit_button("Adicionar"):
+            st.info("Para salvar permanentemente no OneDrive, adicione a linha na sua planilha e o sistema atualizará aqui.")
