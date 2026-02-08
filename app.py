@@ -5,38 +5,38 @@ from datetime import datetime
 import io
 import requests
 
-# --- 1. FUNÇÃO DE LOGIN ---
+# --- 1. FUNÇÃO DE LOGIN (ADICIONADO BOTÃO DE ENTRAR) ---
 def check_password():
-    """Retorna True se o usuário inseriu a senha correta."""
-    def password_entered():
-        if st.session_state["password"] == "1234": # DEFINA SUA SENHA AQUI
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]  # remove a senha do estado por segurança
-        else:
-            st.session_state["password_correct"] = False
-
     if "password_correct" not in st.session_state:
-        # Tela inicial de login
-        st.title("🔐 Acesso Restrito - CRM 2026")
-        st.text_input("Digite a senha para acessar o BI:", type="password", on_change=password_entered, key="password")
-        return False
-    elif not st.session_state["password_correct"]:
-        # Senha incorreta
-        st.title("🔐 Acesso Restrito - CRM 2026")
-        st.text_input("Digite a senha para acessar o BI:", type="password", on_change=password_entered, key="password")
-        st.error("😕 Senha incorreta. Tente novamente.")
-        return False
-    else:
-        # Senha correta
+        st.session_state["password_correct"] = False
+
+    if st.session_state["password_correct"]:
         return True
+
+    st.title("🔐 Login Correspondente 2.0")
+    
+    # Criamos um formulário de login para organizar o campo e o botão
+    with st.form("login_form"):
+        password = st.text_input("Digite a senha para acessar:", type="password")
+        submit_button = st.form_submit_button("Entrar") # Botão solicitado
+        
+        if submit_button:
+            if password == "1234": # Sua senha atual
+                st.session_state["password_correct"] = True
+                st.rerun()
+            else:
+                st.error("😕 Senha incorreta.")
+    return False
 
 if check_password():
     # --- CONFIGURAÇÕES DE PÁGINA ---
     st.set_page_config(page_title="Gestão Correspondente 2026", layout="wide", page_icon="📊")
 
-    # --- 2. EXIBIÇÃO DO LOGO NO TOPO DA BARRA LATERAL ---
-    # O arquivo deve estar na raiz do GitHub com o nome 'logo.png'
-    st.sidebar.image("logo.png", use_container_width=True)
+    # --- 2. LOGO ---
+    try:
+        st.sidebar.image("parceria.JPG", use_container_width=True)
+    except:
+        st.sidebar.warning("Arquivo parceria.JPG não encontrado no GitHub.")
 
     LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1n6529TSBqYhwqAq-ZwVleV0b9q0p38PSPT4eU1z-uNc/export?format=xlsx"
 
@@ -66,7 +66,7 @@ if check_password():
 
     df = carregar_dados()
 
-    # --- BARRA LATERAL (CADASTRO MANTIDO - REGRA 1) ---
+    # --- BARRA LATERAL (INALTERADA - REGRA 1) ---
     with st.sidebar:
         st.divider()
         st.header("📥 Gestão de Dados")
@@ -141,7 +141,7 @@ if check_password():
 
             st.divider()
 
-            # Cabeçalho e Rolagem (MANTIDOS)
+            # Cabeçalho e Rolagem (INALTERADOS)
             cols_h = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
             titulos = ["**Data**", "**Comprador**", "**CPF**", "**Imóvel**", "**Valor**", "**Imobiliária**", "**Status**", " "]
             for col, t in zip(cols_h, titulos):
@@ -161,7 +161,7 @@ if check_password():
                     if c[7].button("🗑️", key=f"del_{i}"):
                         st.warning("Remova a linha no Google Drive para excluir.")
 
-            # --- BOTÃO DE EXPORTAR ABAIXO DA TABELA (MANTIDO) ---
+            # --- EXPORTAR NO FINAL (INALTERADO) ---
             st.write("") 
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
