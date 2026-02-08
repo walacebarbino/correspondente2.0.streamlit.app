@@ -23,7 +23,7 @@ def check_password():
                 st.error("😕 Senha incorreta.")
     return False
 
-# Formatação BR (R$ 1.234,56)
+# Função para formatação padrão Brasil (R$ 1.234,56)
 def formatar_br(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
@@ -84,6 +84,7 @@ if check_password():
         with tab_bi:
             st.title("📊 BI e Performance de Processos")
             
+            # Métricas financeiras
             m1, m2, m3, m4 = st.columns(4)
             total_v = df['Valor'].sum() if 'Valor' in df.columns else 0
             pago = df[df['Status'] == 'Pago']['Valor'].sum() if 'Status' in df.columns else 0
@@ -96,7 +97,7 @@ if check_password():
 
             st.divider()
             
-            # QUADRO ESTILO EXCEL (AZUL E BRANCO) - image_f9d947
+            # QUADRO ESTILO EXCEL (AZUL E BRANCO) SEM O [-]
             st.subheader("📑 Resumo Financeiro Detalhado")
             if 'Status' in df.columns and 'Enquadramento' in df.columns:
                 df_resumo = df.groupby(['Status', 'Enquadramento'])['Valor'].sum().reset_index()
@@ -114,12 +115,13 @@ if check_password():
                 
                 for status in sorted(df_resumo['Status'].unique()):
                     subtotal = df_resumo[df_resumo['Status'] == status]['Valor'].sum()
-                    html_code += f"<tr class='st-row'><td>[-] {status}</td><td class='val'>{formatar_br(subtotal)}</td></tr>"
+                    # Removido o [-] daqui:
+                    html_code += f"<tr class='st-row'><td>{status}</td><td class='val'>{formatar_br(subtotal)}</td></tr>"
                     for _, row in df_resumo[df_resumo['Status'] == status].iterrows():
                         html_code += f"<tr class='en-row'><td style='padding-left:40px'>{row['Enquadramento']}</td><td class='val'>{formatar_br(row['Valor'])}</td></tr>"
                 
                 html_code += f"<tr style='background-color:#f0f0f0; font-weight:bold'><td>TOTAL GERAL</td><td class='val'>{formatar_br(total_v)}</td></tr></table>"
-                st.markdown(html_code, unsafe_allow_html=True) # Renderiza a tabela de fato
+                st.markdown(html_code, unsafe_allow_html=True)
 
             st.divider()
             c1, c2 = st.columns(2)
