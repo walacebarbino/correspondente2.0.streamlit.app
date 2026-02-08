@@ -96,21 +96,34 @@ if check_password():
 
             st.divider()
             
-            # QUADRO HIERÁRQUICO COM TÍTULOS LIMPOS
+            # QUADRO COM CORES NO PADRÃO EXCEL
             st.subheader("📑 Resumo Financeiro Detalhado")
             if 'Status' in df.columns and 'Enquadramento' in df.columns:
                 df_resumo = df.groupby(['Status', 'Enquadramento'])['Valor'].sum().reset_index()
                 
-                tabela_dados = []
+                # Definindo cores conforme o status
+                cores = {
+                    "Pago": "green",
+                    "Aprovado": "blue",
+                    "Inconformidade": "red",
+                    "Triagem": "orange",
+                    "Análise Manual": "gray",
+                    "Montagem PAC": "purple"
+                }
+
                 for status in sorted(df_resumo['Status'].unique()):
                     subtotal = df_resumo[df_resumo['Status'] == status]['Valor'].sum()
-                    tabela_dados.append({"Status / Enquadramento": f"● {status}", "Valor Acumulado": formatar_br(subtotal)})
+                    cor = cores.get(status, "black")
                     
+                    # Header do Status com Cor
+                    st.markdown(f"### :{cor}[{status} — {formatar_br(subtotal)}]")
+                    
+                    # Itens de Enquadramento abaixo
                     for _, row in df_resumo[df_resumo['Status'] == status].iterrows():
-                        tabela_dados.append({"Status / Enquadramento": f"    ○ {row['Enquadramento']}", "Valor Acumulado": formatar_br(row['Valor'])})
+                        st.write(f"&nbsp;&nbsp;&nbsp;&nbsp;○ {row['Enquadramento']}: **{formatar_br(row['Valor'])}**")
                 
-                tabela_dados.append({"Status / Enquadramento": "**TOTAL GERAL**", "Valor Acumulado": f"**{formatar_br(total_v)}**"})
-                st.table(pd.DataFrame(tabela_dados))
+                st.divider()
+                st.markdown(f"### TOTAL GERAL: **{formatar_br(total_v)}**")
 
             st.divider()
             c1, c2 = st.columns(2)
@@ -137,8 +150,7 @@ if check_password():
 
             st.divider()
             h = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
-            titulos = ["**Data**", "**Comprador**", "**CPF**", "**Imóvel**", "**Valor**", "**Imobiliária**", "**Status**", " "]
-            for col, t in zip(h, titulos): col.write(t)
+            for col, t in zip(h, ["**Data**", "**Comprador**", "**CPF**", "**Imóvel**", "**Valor**", "**Imobiliária**", "**Status**", " "]): col.write(t)
 
             with st.container(height=500): # ROLAGEM AMARELA
                 for i, r in df_v.iterrows():
