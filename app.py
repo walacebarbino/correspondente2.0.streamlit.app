@@ -109,19 +109,6 @@ if not df.empty:
                 df_view['Imobiliária'].astype(str).str.contains(busca, case=False)
             ]
 
-        # --- BOTÃO DE EXPORTAR (NOVIDADE) ---
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            # Exporta apenas as colunas principais e os dados filtrados
-            df_view.to_excel(writer, index=False, sheet_name='Base_Clientes')
-        
-        st.download_button(
-            label="📥 Exportar Base Filtrada (Excel)",
-            data=buffer.getvalue(),
-            file_name=f"base_clientes_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
         st.divider()
 
         # Cabeçalho e Rolagem (MANTIDOS - REGRA 1)
@@ -143,6 +130,20 @@ if not df.empty:
                 c[6].write(row.get('Status', '---'))
                 if c[7].button("🗑️", key=f"del_{i}"):
                     st.warning("Remova a linha no Google Drive para excluir.")
+
+        # --- BOTÃO DE EXPORTAR ABAIXO DA TABELA (AJUSTADO) ---
+        st.write("") # Espaçamento
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            df_view.to_excel(writer, index=False, sheet_name='Base_Clientes')
+        
+        st.download_button(
+            label="📥 Exportar Base Filtrada (Excel)",
+            data=buffer.getvalue(),
+            file_name=f"base_clientes_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True # Botão ocupa a largura total para ficar bem visível no fim
+        )
 
 else:
     st.error("Planilha não encontrada ou vazia.")
