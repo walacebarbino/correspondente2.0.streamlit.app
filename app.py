@@ -1,82 +1,116 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from datetime import datetime
 import io
 import requests
 
-# --- CONFIGURAÇÕES ---
-st.set_page_config(page_title="CRM Correspondente 2.0", layout="wide")
+# --- CONFIGURAÇÕES DE PÁGINA ---
+st.set_page_config(page_title="Gestão Correspondente 2026", layout="wide", page_icon="📊")
 
-# Link do Google Drive convertido para Download Direto
+# Link direto do seu Google Drive
 LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1n6529TSBqYhwqAq-ZwVleV0b9q0p38PSPT4eU1z-uNc/export?format=xlsx"
 
 @st.cache_data(ttl=10)
 def carregar_dados():
     try:
-        # O Google Drive entrega o arquivo instantaneamente com este link
         response = requests.get(LINK_PLANILHA, timeout=20)
         df = pd.read_excel(io.BytesIO(response.content))
         
-        # 4º item: Corrigir padrão da data para dd/mm/aaaa
+        # Tratamento de Datas para os Gráficos
         if 'DATA' in df.columns:
-            df['DATA'] = pd.to_datetime(df['DATA']).dt.strftime('%d/%m/%Y')
+            df['DATA_DT'] = pd.to_datetime(df['DATA'], dayfirst=True)
+            df['DATA_STR'] = df['DATA_DT'].dt.strftime('%d/%m/%Y') # Para exibição
+            df['MÊS'] = df['DATA_DT'].dt.strftime('%m/%Y')
         return df
-    except Exception as e:
+    except:
         return pd.DataFrame()
 
 df = carregar_dados()
 
-# --- BARRA LATERAL (IDÊNTICA ÀS CONFIGURAÇÕES APROVADAS) ---
-st.sidebar.header("📥 Gestão de Dados")
-with st.sidebar.form("form_cadastro"):
-    st.subheader("Novo Cadastro Manual")
-    f_data = st.date_input("DATA", datetime.now(), format="DD/MM/YYYY")
-    f_nome = st.text_input("Nome do Comprador")
-    f_cpf = st.text_input("CPF")
-    f_imovel = st.text_input("Nome do Imóvel / Construtora")
-    f_valor = st.number_input("Valor (R$)", min_value=0.0)
-    f_imobiliaria = st.text_input("Imobiliária")
-    # Mantendo a coluna Enquadramento solicitada
-    f_enquadramento = st.selectbox("Enquadramento", ["SBPE", "MCMV", "FGTS", "Outros"])
-    f_status = st.selectbox("Status", ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"])
+# --- BARRA LATERAL (CADASTRO MANTIDO) ---
+with st.sidebar:
+    st.header("📥 Gestão de Dados")
+    with st.form("form_cadastro"):
+        st.subheader("Novo Cadastro Manual")
+        f_data = st.date_input("DATA", datetime.now(), format="DD/MM/YYYY")
+        f_nome = st.text_input("Nome do Comprador")
+        f_cpf = st.text_input("CPF")
+        f_imovel = st.text_input("Nome do Imóvel / Construtora")
+        f_valor = st.number_input("Valor (R$)", min_value=0.0)
+        f_imobiliaria = st.text_input("Imobiliária")
+        f_enquadramento = st.selectbox("Enquadramento", ["SBPE", "MCMV", "FGTS", "Outros"])
+        f_status = st.selectbox("Status", ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"])
+        
+        if st.form_submit_button("Cadastrar"):
+            st.info("Dado recebido! Adicione na sua planilha do Google Drive para atualizar.")
+
+# --- NAVEGAÇÃO POR ABAS (PÁGINAS SEPARADAS) ---
+tab_bi, tab_carteira = st.tabs(["📊 Business Intelligence", "📋 Carteira de Clientes"])
+
+# --- ABA 1: BI PROFISSIONAL ---
+with tab_bi:
+    st.title("📊 BI e Performance de Vendas - 2026")
     
-    if st.form_submit_button("Cadastrar"):
-        st.info("Para salvar, adicione os dados na sua planilha do Google Drive.")
+    if not df.empty:
+        # Métricas em destaque
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total de Dossiês", f"{len(df)} PACs")
+        
+        v_pago = df[df['Status'] == 'Pago']['Valor (R$)'].sum()
+        m2.metric("Volume Pago", f"R$ {v_pago:,.2f}")
+        
+        inconf = len(df[df['Status'] == 'Inconformidade'])
+        m3.metric("Inconformidades", inconf, delta=f"{inconf} pendentes", delta_color="inverse")
+        
+        ticket = df['Valor (R$)'].mean() if len(df) > 0 else 0
+        m4.metric("Ticket Médio", f"R$ {ticket:,.2f}")
 
-# --- DASHBOARD DE BI ---
-st.title("📊 BI e Gestão de Fluxo - Carteira 2026")
+        st.divider()
 
-if not df.empty:
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total Dossiês", len(df))
-    # Filtros baseados no Status da sua planilha
-    m2.metric("Inconformidades", len(df[df['Status'] == 'Inconformidade']) if 'Status' in df else 0)
-    m3.metric("Processos Pagos", len(df[df['Status'] == 'Pago']) if 'Status' in df else 0)
+        # Gráficos
+        col_esq, col_dir = st.columns([2, 1])
+
+        with col_esq:
+            st.subheader("📈 Volume Mensal de PACs")
+            # Agrupamento por mês para o gráfico solicitado
+            df_mensal = df.groupby('MÊS').size().reset_index(name='Qtd')
+            fig_mensal = px.line(df_mensal, x='MÊS', y='Qtd', markers=True, 
+                                line_shape="spline", color_discrete_sequence=["#00CC96"])
+            fig_mensal.update_layout(hovermode="x unified")
+            st.plotly_chart(fig_mensal, use_container_width=True)
+
+        with col_dir:
+            st.subheader("🎯 Mix por Enquadramento")
+            fig_pie = px.pie(df, names='Enquadramento', hole=0.4, 
+                            color_discrete_sequence=px.colors.qualitative.Pastel)
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        st.subheader("📑 Status dos Processos")
+        fig_status = px.bar(df, x='Status', color='Status', barmode='group')
+        st.plotly_chart(fig_status, use_container_width=True)
+    else:
+        st.warning("Aguardando sincronização com o Google Drive...")
+
+# --- ABA 2: CARTEIRA DE CLIENTES ---
+with tab_carteira:
+    st.title("📋 Gestão da Carteira")
     
-    df['Valor (R$)'] = pd.to_numeric(df['Valor (R$)'], errors='coerce').fillna(0)
-    m4.metric("Volume Total", f"R$ {df['Valor (R$)'].sum():,.2f}")
+    if not df.empty:
+        # Filtro rápido na página de carteira
+        busca = st.text_input("🔍 Buscar por Comprador ou Imobiliária")
+        df_filtrado = df[df['Nome do Comprador'].str.contains(busca, case=False, na=False)] if busca else df
 
-    # --- GESTÃO DA CARTEIRA ---
-    st.divider()
-    st.subheader("📋 Gestão da Carteira")
-    
-    # Grid organizado com as colunas aprovadas
-    cols_t = st.columns([1.5, 1, 1, 1, 1, 0.8, 0.5])
-    titulos = ["**Comprador**", "**Status**", "**Enquadramento**", "**Imobiliária**", "**Valor**", "**Data**", "**🗑️**"]
-    for col, texto in zip(cols_t, titulos):
-        col.write(texto)
-
-    for index, row in df.iterrows():
-        c = st.columns([1.5, 1, 1, 1, 1, 0.8, 0.5])
-        c[0].write(row.get('Nome do Comprador', '---'))
-        c[1].write(row.get('Status', '---'))
-        c[2].write(row.get('Enquadramento', '---'))
-        c[3].write(row.get('Imobiliária', '---'))
-        c[4].write(f"R$ {row.get('Valor (R$)', 0):,.2f}")
-        c[5].write(str(row.get('DATA', '---')))
-        if c[6].button("🗑️", key=f"del_{index}"):
-            st.warning("Exclua na planilha para remover do BI.")
-else:
-    # Aviso de segurança caso o link do Google falhe
-    st.error("❌ Erro de Conexão: Não foi possível acessar a planilha do Google Drive.")
-    st.info("⚠️ Verifique se o seu arquivo requirements.txt no GitHub contém as 6 linhas necessárias.")
+        # Exibição profissional da tabela
+        st.dataframe(
+            df_filtrado[['DATA_STR', 'Nome_do_Comprador', 'Status', 'Enquadramento', 'Imobiliária', 'Valor (R$)']],
+            column_config={
+                "DATA_STR": "Data",
+                "Valor (R$)": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+                "Nome_do_Comprador": "Comprador"
+            },
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.error("Erro ao carregar a base de dados.")
