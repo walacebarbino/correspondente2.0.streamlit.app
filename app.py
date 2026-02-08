@@ -36,7 +36,7 @@ def carregar_dados():
 
 df = carregar_dados()
 
-# --- BARRA LATERAL (MANTIDA 100%) ---
+# --- BARRA LATERAL (INALTERADA - REGRA 1) ---
 with st.sidebar:
     st.header("📥 Gestão de Dados")
     with st.form("form_cadastro"):
@@ -57,7 +57,7 @@ with st.sidebar:
 tab_bi, tab_carteira = st.tabs(["📊 Dashboard Profissional", "📋 Carteira de Clientes"])
 
 if not df.empty:
-    # --- ABA 1: BI PROFISSIONAL ---
+    # --- ABA 1: BI PROFISSIONAL (INALTERADA) ---
     with tab_bi:
         st.title("📊 BI e Performance de Vendas - 2026")
         m1, m2, m3, m4 = st.columns(4)
@@ -83,24 +83,40 @@ if not df.empty:
                 fig_pie = px.pie(df, names='Enquadramento', hole=0.5)
                 st.plotly_chart(fig_pie, use_container_width=True)
 
-    # --- ABA 2: CARTEIRA DE CLIENTES ---
+    # --- ABA 2: CARTEIRA DE CLIENTES (COM FILTROS SOLICITADOS) ---
     with tab_carteira:
         st.title("📋 Gestão da Carteira")
         
-        busca = st.text_input("🔍 Buscar por Comprador")
-        df_view = df.copy()
-        if busca:
-            col_nome = 'Nome do Comprador' if 'Nome do Comprador' in df.columns else df.columns[1]
-            df_view = df_view[df_view[col_nome].astype(str).str.contains(busca, case=False)]
+        # FILTROS DE COLUNA (ADICIONADOS)
+        filtro_col1, filtro_col2, filtro_col3 = st.columns(3)
+        with filtro_col1:
+            lista_status = ["Todos"] + sorted(df['Status'].unique().tolist())
+            status_sel = st.selectbox("Filtrar Status", lista_status)
+        with filtro_col2:
+            lista_enq = ["Todos"] + sorted(df['Enquadramento'].unique().tolist())
+            enq_sel = st.selectbox("Filtrar Enquadramento", lista_enq)
+        with filtro_col3:
+            busca = st.text_input("🔍 Buscar Comprador/Imobiliária")
 
-        # Cabeçalho Fixo (Fora da rolagem)
+        # Aplicando a lógica dos filtros
+        df_view = df.copy()
+        if status_sel != "Todos":
+            df_view = df_view[df_view['Status'] == status_sel]
+        if enq_sel != "Todos":
+            df_view = df_view[df_view['Enquadramento'] == enq_sel]
+        if busca:
+            df_view = df_view[
+                df_view['Nome do Comprador'].astype(str).str.contains(busca, case=False) | 
+                df_view['Imobiliária'].astype(str).str.contains(busca, case=False)
+            ]
+
+        # Cabeçalho Fixo (Inalterado)
         cols_h = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
         titulos = ["**Data**", "**Comprador**", "**CPF**", "**Imóvel**", "**Valor**", "**Imobiliária**", "**Status**", " "]
         for col, t in zip(cols_h, titulos):
             col.write(t)
 
-        # --- FAIXA AMARELA: ÁREA DE ROLAGEM ---
-        # Definimos uma altura fixa (ex: 500px) para criar a barra de rolagem interna
+        # ÁREA DE ROLAGEM (Inalterada - Regra 1)
         container_rolagem = st.container(height=500)
         
         with container_rolagem:
