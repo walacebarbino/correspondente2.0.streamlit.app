@@ -23,7 +23,7 @@ def check_password():
                 st.error("😕 Senha incorreta.")
     return False
 
-# Função auxiliar para formatar moeda no padrão BR (1.000,00)
+# Função para formatação padrão Brasil (R$ 1.234,56)
 def formatar_br(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
@@ -82,30 +82,38 @@ if check_password():
     if not df.empty:
         # --- ABA 1: BI PROFISSIONAL ---
         with tab_bi:
-            st.title("📊 BI e Performance de Processos") # Título Atualizado
+            st.title("📊 BI e Performance de Processos") # Título conforme image_f96c49
             
+            # Métricas em formato BR conforme image_f96864
             m1, m2, m3, m4 = st.columns(4)
             total_v = df['Valor'].sum() if 'Valor' in df.columns else 0
             pago = df[df['Status'] == 'Pago']['Valor'].sum() if 'Status' in df.columns else 0
             ticket = (total_v / len(df)) if len(df) > 0 else 0
 
             m1.metric("Total de Dossiês", f"{len(df)} PACs")
-            m2.metric("Volume Total", formatar_br(total_v)) # Formato BR
-            m3.metric("Total Pago", formatar_br(pago))       # Formato BR
-            m4.metric("Ticket Médio", formatar_br(ticket))   # Formato BR
+            m2.metric("Volume Total", formatar_br(total_v)) 
+            m3.metric("Total Pago", formatar_br(pago))       
+            m4.metric("Ticket Médio", formatar_br(ticket))   
 
             st.divider()
             
-            # QUADRO DE VALORES (ESTILO EXCEL)
-            st.subheader("📑 Resumo Financeiro por Status e Enquadramento")
+            # QUADRO HIERÁRQUICO (STATUS + ENQUADRAMENTO) - image_f9772d
+            st.subheader("📑 Resumo Financeiro Detalhado")
             if 'Status' in df.columns and 'Enquadramento' in df.columns:
-                resumo = df.groupby(['Status', 'Enquadramento'])['Valor'].sum().reset_index()
-                resumo.columns = ['Status do Processo', 'Enquadramento', 'Valor (R$)']
-                # Aplica formatação brasileira na tabela
-                resumo_style = resumo.copy()
-                resumo_style['Valor (R$)'] = resumo_style['Valor (R$)'].apply(formatar_br)
-                st.table(resumo_style)
-                st.markdown(f"**Total Geral: {formatar_br(total_v)}**") #
+                # Criando a estrutura de sub-totais para a tabela
+                df_resumo = df.groupby(['Status', 'Enquadramento'])['Valor'].sum().reset_index()
+                
+                # Montando a visualização em lista para simular a árvore do Excel
+                tabela_dados = []
+                for status in sorted(df_resumo['Status'].unique()):
+                    subtotal = df_resumo[df_resumo['Status'] == status]['Valor'].sum()
+                    tabela_dados.append({"Rótulos de Linha": f"[-] {status}", "Soma de Valor (R$)": formatar_br(subtotal)})
+                    
+                    for _, row in df_resumo[df_resumo['Status'] == status].iterrows():
+                        tabela_dados.append({"Rótulos de Linha": f"    {row['Enquadramento']}", "Soma de Valor (R$)": formatar_br(row['Valor'])})
+                
+                tabela_dados.append({"Rótulos de Linha": "**Total Geral**", "Soma de Valor (R$)": f"**{formatar_br(total_v)}**"})
+                st.table(pd.DataFrame(tabela_dados))
 
             st.divider()
             c1, c2 = st.columns(2)
@@ -117,7 +125,7 @@ if check_password():
                 st.subheader("🎯 Mix Enquadramento")
                 st.plotly_chart(px.pie(df, names='Enquadramento', hole=0.5), use_container_width=True)
 
-        # --- ABA 2: CARTEIRA (REGRA 1 - MANTIDA) ---
+        # --- ABA 2: CARTEIRA (REGRA 1 - PRESERVADA) ---
         with tab_carteira:
             st.title("📋 Gestão da Carteira")
             col_f1, col_f2, col_f3 = st.columns(3)
@@ -134,18 +142,20 @@ if check_password():
             h = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
             for col, t in zip(h, ["**Data**", "**Comprador**", "**CPF**", "**Imóvel**", "**Valor**", "**Imobiliária**", "**Status**", " "]): col.write(t)
 
-            with st.container(height=500): # ROLAGEM AMARELA PRESERVADA
+            with st.container(height=500): # ROLAGEM AMARELA PRESERVADA conforme image_eee139
                 for i, r in df_v.iterrows():
                     c = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
                     c[0].write(r.get('DATA_EXIBIR', ''))
                     c[1].write(r.get('Nome do Comprador', ''))
                     c[2].write(r.get('CPF', ''))
                     c[3].write(r.get('Imóvel', ''))
-                    c[4].write(formatar_br(r.get('Valor', 0))) # Valor em padrão BR
+                    c[4].write(formatar_br(r.get('Valor', 0))) 
                     c[5].write(r.get('Imobiliária', ''))
                     c[6].write(r.get('Status', ''))
                     if c[7].button("🗑️", key=f"d_{i}"): st.warning("Exclua na planilha original.")
 
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as w: df_v.to_excel(w, index=False)
-            st.download_button("📥 Exportar Base Filtrada (Excel)", buffer.getvalue(), "base.xlsx", use_container_width=True)
+            st.download_button("📥 Exportar Base Filtrada (Excel)", buffer.getvalue(), f"base_{datetime.now().strftime('%d/%m/%Y')}.xlsx", use_container_width=True)
+    else:
+        st.error("Planilha não encontrada.")
