@@ -5,7 +5,7 @@ from datetime import datetime
 import io
 import requests
 
-# --- 1. FUNÇÃO DE LOGIN (ADICIONADO BOTÃO DE ENTRAR) ---
+# --- 1. FUNÇÃO DE LOGIN (COM BOTÃO DE ENTRAR) ---
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
@@ -15,10 +15,9 @@ def check_password():
 
     st.title("🔐 Login Correspondente 2.0")
     
-    # Criamos um formulário de login para organizar o campo e o botão
     with st.form("login_form"):
         password = st.text_input("Digite a senha para acessar:", type="password")
-        submit_button = st.form_submit_button("Entrar") # Botão solicitado
+        submit_button = st.form_submit_button("Entrar")
         
         if submit_button:
             if password == "1234": # Sua senha atual
@@ -37,6 +36,11 @@ if check_password():
         st.sidebar.image("parceria.JPG", use_container_width=True)
     except:
         st.sidebar.warning("Arquivo parceria.JPG não encontrado no GitHub.")
+
+    # --- BOTÃO DE SAIR (ADICIONADO NA LATERAL) ---
+    if st.sidebar.button("🚪 Sair do Sistema"):
+        st.session_state["password_correct"] = False
+        st.rerun()
 
     LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1n6529TSBqYhwqAq-ZwVleV0b9q0p38PSPT4eU1z-uNc/export?format=xlsx"
 
