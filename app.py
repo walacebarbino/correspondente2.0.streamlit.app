@@ -6,30 +6,24 @@ import io
 import requests
 import base64
 
-# --- 1. CONFIGURAÇÕES APROVADAS ---
+# --- CONFIGURAÇÕES ---
 st.set_page_config(page_title="CRM Correspondente 2.0", layout="wide")
 
-# Link original que você forneceu
-LINK_ONEDRIVE = "https://1drv.ms/x/c/348d5d4bf85c1dbc/IQABx7R7JVxrQ4FFlg_8TgrhATyuhRja86cSTgU-47UwQfI?e=jhiCze"
-
-def criar_link_direto(url):
-    try:
-        # Este método transforma qualquer link do OneDrive em um link de dados puro
-        base64_enqueue = base64.b64encode(url.encode("ascii")).decode("ascii")
-        base64_enqueue = base64_enqueue.replace("/", "_").replace("+", "-").rstrip("=")
-        return f"https://api.onedrive.com/v1.0/shares/u!{base64_enqueue}/root/content"
-    except:
-        return url
+# Link base do seu arquivo (estável)
+LINK_BASE = "https://1drv.ms/x/c/348d5d4bf85c1dbc/IQABx7R7JVxrQ4FFlg_8TgrhATyuhRja86cSTgU-47UwQfI"
 
 @st.cache_data(ttl=10)
 def carregar_dados():
     try:
-        direto = criar_link_direto(LINK_ONEDRIVE)
-        response = requests.get(direto, timeout=20)
-        # Lê a planilha com as colunas reais: DATA, Nome do Comprador, Enquadramento, etc.
+        # Gera o link que o Python consegue "sugar" os dados
+        base64_url = base64.b64encode(LINK_BASE.encode("ascii")).decode("ascii").replace("/", "_").replace("+", "-").rstrip("=")
+        url_direta = f"https://api.onedrive.com/v1.0/shares/u!{base64_url}/root/content"
+        
+        # O 'requests' faz a chamada e o 'openpyxl' lê o arquivo
+        response = requests.get(url_direta, timeout=20)
         df = pd.read_excel(io.BytesIO(response.content))
         
-        # 4º item: Corrigir padrão da data para dd/mm/aaaa
+        # Corrigindo o padrão da data para dd/mm/aaaa conforme solicitado
         if 'DATA' in df.columns:
             df['DATA'] = pd.to_datetime(df['DATA']).dt.strftime('%d/%m/%Y')
         return df
@@ -38,11 +32,11 @@ def carregar_dados():
 
 df = carregar_dados()
 
-# --- 2. BARRA LATERAL (CONFIGURAÇÃO ORIGINAL APROVADA) ---
+# --- BARRA LATERAL (CONFIGURAÇÕES ORIGINAIS APROVADAS) ---
 st.sidebar.header("📥 Gestão de Dados")
 with st.sidebar.form("form_cadastro"):
     st.subheader("Novo Cadastro Manual")
-    # Atenção às colunas de entrada aprovadas
+    # Colunas de entrada idênticas à sua planilha
     f_data = st.date_input("DATA", datetime.now(), format="DD/MM/YYYY")
     f_nome = st.text_input("Nome do Comprador")
     f_cpf = st.text_input("CPF")
@@ -53,12 +47,13 @@ with st.sidebar.form("form_cadastro"):
     f_status = st.selectbox("Status", ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"])
     
     if st.form_submit_button("Cadastrar"):
-        st.info("Dado recebido! Adicione-o na sua planilha do OneDrive para atualizar o BI.")
+        st.info("Dado recebido! Adicione na sua planilha do OneDrive para atualizar o BI.")
 
-# --- 3. DASHBOARD DE BI ---
+# --- DASHBOARD DE BI ---
 st.title("📊 BI e Gestão de Fluxo - Carteira 2026")
 
 if not df.empty:
+    # Métricas de topo conforme aprovado
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total Dossiês", len(df))
     m2.metric("Inconformidades", len(df[df['Status'] == 'Inconformidade']) if 'Status' in df else 0)
@@ -67,15 +62,15 @@ if not df.empty:
     df['Valor (R$)'] = pd.to_numeric(df['Valor (R$)'], errors='coerce').fillna(0)
     m4.metric("Volume Total", f"R$ {df['Valor (R$)'].sum():,.2f}")
 
-    # --- 4. GESTÃO DA CARTEIRA ---
+    # --- GESTÃO DA CARTEIRA (CONFORME SOLICITADO) ---
     st.divider()
     st.subheader("📋 Gestão da Carteira")
     
-    # Colunas ajustadas para incluir o Enquadramento
+    # Grid de colunas incluindo o ENQUADRAMENTO
     cols_t = st.columns([1.5, 1, 1, 1, 1, 0.8, 0.5])
-    headers = ["**Comprador**", "**Status**", "**Enquadramento**", "**Imobiliária**", "**Valor**", "**Data**", "**🗑️**"]
-    for col, text in zip(cols_t, headers):
-        col.write(text)
+    titulos = ["**Comprador**", "**Status**", "**Enquadramento**", "**Imobiliária**", "**Valor**", "**Data**", "**🗑️**"]
+    for col, texto in zip(cols_t, titulos):
+        col.write(texto)
 
     for index, row in df.iterrows():
         c = st.columns([1.5, 1, 1, 1, 1, 0.8, 0.5])
@@ -88,6 +83,6 @@ if not df.empty:
         if c[6].button("🗑️", key=f"del_{index}"):
             st.warning("Exclua no Excel para remover.")
 else:
-    # Aviso de erro caso a conexão ainda falhe
+    # Mensagem de erro que o sistema está pedindo para conferir
     st.error("❌ Erro de Conexão: O sistema não conseguiu acessar o OneDrive automaticamente.")
-    st.info("Verifique se o seu arquivo requirements.txt contém: streamlit, pandas, plotly, openpyxl, requests.")
+    st.info("⚠️ Verifique se o seu arquivo requirements.txt no GitHub contém as 6 linhas (incluindo openpyxl e requests).")
