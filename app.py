@@ -93,7 +93,6 @@ if check_password():
     if not df.empty:
         # --- ABA 1: BI PROFISSIONAL ---
         with tab_bi:
-            # MUDANÇA 1: Título atualizado
             st.title("📊 BI e Performance de Processos")
             
             # Métricas
@@ -103,19 +102,19 @@ if check_password():
             m2.metric("Volume Total", f"R$ {total_v:,.2f}")
             pago = df[df['Status'] == 'Pago']['Valor'].sum() if 'Status' in df.columns else 0
             m3.metric("Total Pago", f"R$ {pago:,.2f}")
-            m4.metric("Ticket Médio", f"R$ {(total_v/len(df) if len(df)>0 else 0):,.2f}")
+            
+            # Cálculo de Ticket Médio formatado com 2 casas decimais
+            ticket_calculado = (total_v / len(df)) if len(df) > 0 else 0
+            m4.metric("Ticket Médio", f"R$ {ticket_calculado:,.2f}")
 
             st.divider()
 
-            # MUDANÇA 2: NOVO QUADRO COM ENQUADRAMENTO (Hierárquico)
+            # QUADRO DE VALORES/STATUS (FORMATO TIPO EXCEL)
             st.subheader("📑 Resumo Financeiro por Status e Enquadramento")
             if 'Status' in df.columns and 'Valor' in df.columns and 'Enquadramento' in df.columns:
-                # Agrupamento detalhado conforme imagem f95ce3
-                resumo_detalhado = df.groupby(['Status', 'Enquadramento'])['Valor'].sum().reset_index()
-                resumo_detalhado.columns = ['Status do Processo', 'Enquadramento', 'Soma de Valor (R$)']
-                
-                # Exibição em tabela formatada
-                st.table(resumo_detalhado.style.format({'Soma de Valor (R$)': 'R$ {:,.2f}'}))
+                resumo_status = df.groupby(['Status', 'Enquadramento'])['Valor'].sum().reset_index()
+                resumo_status.columns = ['Status do Processo', 'Enquadramento', 'Soma de Valor (R$)']
+                st.table(resumo_status.style.format({'Soma de Valor (R$)': 'R$ {:,.2f}'}))
                 st.markdown(f"**Total Geral: R$ {total_v:,.2f}**")
 
             st.divider()
@@ -165,7 +164,7 @@ if check_password():
             for col, t in zip(cols_h, titulos):
                 col.write(t)
 
-            # ROLAGEM NA FAIXA AMARELA (SANTIFICADA)
+            # Rolagem na Faixa Amarela (MANTIDA)
             container_rolagem = st.container(height=500)
             with container_rolagem:
                 for i, row in df_view.iterrows():
@@ -180,7 +179,7 @@ if check_password():
                     if c[7].button("🗑️", key=f"del_{i}"):
                         st.warning("Remova a linha no Google Drive para excluir.")
 
-            # BOTÃO DE EXPORTAR (FINAL DA PÁGINA)
+            # Exportar no final da página
             st.write("") 
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
