@@ -17,6 +17,7 @@ def carregar_dados():
         df = pd.read_excel(io.BytesIO(response.content))
         df.columns = [str(c).strip() for c in df.columns]
         
+        # Mapeamento para garantir que o BI funcione sem travar
         mapeamento = {
             'Nome_do_Comprador': 'Nome do Comprador',
             'Valor (R$)': 'Valor',
@@ -27,27 +28,28 @@ def carregar_dados():
         if 'DATA' in df.columns:
             df['DATA_DT'] = pd.to_datetime(df['DATA'], errors='coerce')
             df = df.dropna(subset=['DATA_DT'])
-            # 1. AJUSTE DE DATA: Forçando o formato DD/MM/AAAA para exibição
             df['DATA_EXIBIR'] = df['DATA_DT'].dt.strftime('%d/%m/%Y')
             df['MÊS'] = df['DATA_DT'].dt.strftime('%m/%Y')
             
         return df
-    except Exception as e:
+    except:
         return pd.DataFrame()
 
 df = carregar_dados()
 
-# --- BARRA LATERAL (CADASTRO) ---
+# --- BARRA LATERAL (RESTAURADA 100% COMO ESTAVA) ---
 with st.sidebar:
     st.header("📥 Gestão de Dados")
     with st.form("form_cadastro"):
         st.subheader("Novo Cadastro Manual")
         f_data = st.date_input("DATA", datetime.now(), format="DD/MM/YYYY")
         f_nome = st.text_input("Nome do Comprador")
+        f_cpf = st.text_input("CPF") # Campo restaurado
         f_imovel = st.text_input("Nome do Imóvel / Construtora")
         f_valor = st.number_input("Valor (R$)", min_value=0.0)
-        f_status = st.selectbox("Status", ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"])
+        f_imobiliaria = st.text_input("Imobiliária") # Campo restaurado
         f_enquadramento = st.selectbox("Enquadramento", ["SBPE", "MCMV", "FGTS", "Outros"])
+        f_status = st.selectbox("Status", ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"])
         
         if st.form_submit_button("Cadastrar"):
             st.info("Dado recebido! Adicione na sua planilha para atualizar.")
@@ -92,24 +94,23 @@ if not df.empty:
             col_nome = 'Nome do Comprador' if 'Nome do Comprador' in df.columns else df.columns[1]
             df_view = df_view[df_view[col_nome].astype(str).str.contains(busca, case=False)]
 
-        # 2. OPÇÃO DE EXCLUIR E DATA DD/MM/AAAA
-        # Criamos o layout de colunas para simular a tabela com o botão de excluir
-        cols = st.columns([1, 2, 1, 1, 1, 1, 0.5])
-        titulos = ["**Data**", "**Comprador**", "**Imóvel**", "**Valor**", "**Enquadramento**", "**Status**", " "]
+        # TABELA COM LIXEIRA E DATA DD/MM/AAAA
+        cols = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5]) # Ajustado para caber Imobiliária
+        titulos = ["**Data**", "**Comprador**", "**CPF**", "**Imóvel**", "**Valor**", "**Imobiliária**", "**Status**", " "]
         for col, t in zip(cols, titulos):
             col.write(t)
 
         for i, row in df_view.iterrows():
-            c = st.columns([1, 2, 1, 1, 1, 1, 0.5])
-            c[0].write(row.get('DATA_EXIBIR', '---')) # Data formatada
+            c = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
+            c[0].write(row.get('DATA_EXIBIR', '---'))
             c[1].write(row.get('Nome do Comprador', '---'))
-            c[2].write(row.get('Imóvel', '---'))
-            c[3].write(f"R$ {row.get('Valor', 0):,.2f}")
-            c[4].write(row.get('Enquadramento', '---'))
-            c[5].write(row.get('Status', '---'))
-            # Retornando o botão de excluir
-            if c[6].button("🗑️", key=f"del_{i}"):
-                st.warning("Para excluir definitivamente, remova a linha na planilha do Google Drive.")
+            c[2].write(row.get('CPF', '---'))
+            c[3].write(row.get('Imóvel', '---'))
+            c[4].write(f"R$ {row.get('Valor', 0):,.2f}")
+            c[5].write(row.get('Imobiliária', '---'))
+            c[6].write(row.get('Status', '---'))
+            if c[7].button("🗑️", key=f"del_{i}"):
+                st.warning("Remova a linha no Google Drive para excluir definitivamente.")
 
 else:
     st.error("Planilha não encontrada ou vazia.")
