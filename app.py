@@ -17,7 +17,6 @@ def carregar_dados():
         df = pd.read_excel(io.BytesIO(response.content))
         df.columns = [str(c).strip() for c in df.columns]
         
-        # Mapeamento para garantir que o BI funcione sem travar
         mapeamento = {
             'Nome_do_Comprador': 'Nome do Comprador',
             'Valor (R$)': 'Valor',
@@ -37,17 +36,17 @@ def carregar_dados():
 
 df = carregar_dados()
 
-# --- BARRA LATERAL (RESTAURADA 100% COMO ESTAVA) ---
+# --- BARRA LATERAL (MANTIDA 100%) ---
 with st.sidebar:
     st.header("📥 Gestão de Dados")
     with st.form("form_cadastro"):
         st.subheader("Novo Cadastro Manual")
         f_data = st.date_input("DATA", datetime.now(), format="DD/MM/YYYY")
         f_nome = st.text_input("Nome do Comprador")
-        f_cpf = st.text_input("CPF") # Campo restaurado
+        f_cpf = st.text_input("CPF")
         f_imovel = st.text_input("Nome do Imóvel / Construtora")
         f_valor = st.number_input("Valor (R$)", min_value=0.0)
-        f_imobiliaria = st.text_input("Imobiliária") # Campo restaurado
+        f_imobiliaria = st.text_input("Imobiliária")
         f_enquadramento = st.selectbox("Enquadramento", ["SBPE", "MCMV", "FGTS", "Outros"])
         f_status = st.selectbox("Status", ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"])
         
@@ -94,23 +93,28 @@ if not df.empty:
             col_nome = 'Nome do Comprador' if 'Nome do Comprador' in df.columns else df.columns[1]
             df_view = df_view[df_view[col_nome].astype(str).str.contains(busca, case=False)]
 
-        # TABELA COM LIXEIRA E DATA DD/MM/AAAA
-        cols = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5]) # Ajustado para caber Imobiliária
+        # Cabeçalho Fixo (Fora da rolagem)
+        cols_h = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
         titulos = ["**Data**", "**Comprador**", "**CPF**", "**Imóvel**", "**Valor**", "**Imobiliária**", "**Status**", " "]
-        for col, t in zip(cols, titulos):
+        for col, t in zip(cols_h, titulos):
             col.write(t)
 
-        for i, row in df_view.iterrows():
-            c = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
-            c[0].write(row.get('DATA_EXIBIR', '---'))
-            c[1].write(row.get('Nome do Comprador', '---'))
-            c[2].write(row.get('CPF', '---'))
-            c[3].write(row.get('Imóvel', '---'))
-            c[4].write(f"R$ {row.get('Valor', 0):,.2f}")
-            c[5].write(row.get('Imobiliária', '---'))
-            c[6].write(row.get('Status', '---'))
-            if c[7].button("🗑️", key=f"del_{i}"):
-                st.warning("Remova a linha no Google Drive para excluir definitivamente.")
+        # --- FAIXA AMARELA: ÁREA DE ROLAGEM ---
+        # Definimos uma altura fixa (ex: 500px) para criar a barra de rolagem interna
+        container_rolagem = st.container(height=500)
+        
+        with container_rolagem:
+            for i, row in df_view.iterrows():
+                c = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
+                c[0].write(row.get('DATA_EXIBIR', '---'))
+                c[1].write(row.get('Nome do Comprador', '---'))
+                c[2].write(row.get('CPF', '---'))
+                c[3].write(row.get('Imóvel', '---'))
+                c[4].write(f"R$ {row.get('Valor', 0):,.2f}")
+                c[5].write(row.get('Imobiliária', '---'))
+                c[6].write(row.get('Status', '---'))
+                if c[7].button("🗑️", key=f"del_{i}"):
+                    st.warning("Remova a linha no Google Drive para excluir.")
 
 else:
     st.error("Planilha não encontrada ou vazia.")
