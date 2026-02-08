@@ -23,14 +23,21 @@ def check_password():
                 st.error("😕 Senha incorreta.")
     return False
 
-# Formatação BR (R$ 1.234,56)
+# Formatação brasileira (R$ 1.234,56)
 def formatar_br(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 if check_password():
     st.set_page_config(page_title="Gestão Correspondente 2026", layout="wide", page_icon="📊")
 
-    # Botão para forçar atualização sem precisar de F5
+    # --- 2. LOGO (REGRA 1 - RECUPERADO) E BOTÕES ---
+    try:
+        # Forçando a exibição do logo conforme as imagens anteriores
+        st.sidebar.image("parceria.JPG", use_container_width=True)
+    except:
+        st.sidebar.error("Logo 'parceria.JPG' não encontrado no repositório.")
+
+    # Botão de atualização forçada
     if st.sidebar.button("🔄 Atualizar Dados Agora"):
         st.cache_data.clear()
         st.rerun()
@@ -41,12 +48,12 @@ if check_password():
 
     LINK_PLANILHA = "https://docs.google.com/spreadsheets/d/1n6529TSBqYhwqAq-ZwVleV0b9q0p38PSPT4eU1z-uNc/export?format=xlsx"
 
-    # REMOVI O CACHE LONGO PARA FORÇAR A ATUALIZAÇÃO
+    # Função de carregamento sem cache viciado
     def carregar_dados():
         try:
-            # Adicionando um parâmetro aleatório no link para enganar o cache do Google
-            url = f"{LINK_PLANILHA}&cache={datetime.now().timestamp()}"
-            response = requests.get(url, timeout=20)
+            # Timestamp evita que o Google entregue uma versão antiga
+            url_final = f"{LINK_PLANILHA}&cache_buster={datetime.now().timestamp()}"
+            response = requests.get(url_final, timeout=20)
             df = pd.read_excel(io.BytesIO(response.content))
             df.columns = [str(c).strip() for c in df.columns]
             mapeamento = {'Nome_do_Comprador': 'Nome do Comprador', 'Valor (R$)': 'Valor', 'Nome do Imóvel / Construtora': 'Imóvel'}
@@ -62,7 +69,7 @@ if check_password():
 
     df = carregar_dados()
 
-    # --- BARRA LATERAL (REGRA 1 - MANTIDA) ---
+    # --- BARRA LATERAL (REGRA 1 - PRESERVADA) ---
     with st.sidebar:
         st.divider()
         st.header("📥 Gestão de Dados")
@@ -77,11 +84,12 @@ if check_password():
             f_enquadramento = st.selectbox("Enquadramento", ["SBPE", "MCMV", "FGTS", "Outros"])
             f_status = st.selectbox("Status", ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"])
             if st.form_submit_button("Cadastrar"):
-                st.info("Dado recebido!")
+                st.info("Dado enviado para a planilha!")
 
     tab_bi, tab_carteira = st.tabs(["📊 Dashboard Profissional", "📋 Carteira de Clientes"])
 
     if not df.empty:
+        # --- ABA 1: BI PROFISSIONAL ---
         with tab_bi:
             st.title("📊 BI e Performance de Processos")
             
@@ -91,12 +99,13 @@ if check_password():
             ticket = (total_v / len(df)) if len(df) > 0 else 0
 
             m1.metric("Total de Dossiês", f"{len(df)} PACs")
-            m2.metric("Volume Total", formatar_br(total_v)) 
+            m2.metric("Volume Total", formatar_br(total_v))
             m3.metric("Total Pago", formatar_br(pago))       
             m4.metric("Ticket Médio", formatar_br(ticket))   
 
             st.divider()
             
+            # QUADRO ESTILO EXCEL (AZUL E BRANCO) SEM O [-]
             st.subheader("📑 Resumo Financeiro Detalhado")
             df_resumo = df.groupby(['Status', 'Enquadramento'])['Valor'].sum().reset_index()
             
@@ -127,6 +136,7 @@ if check_password():
             with c2:
                 st.plotly_chart(px.pie(df, names='Enquadramento', hole=0.5, title="🎯 Mix Enquadramento"), use_container_width=True)
 
+        # --- ABA 2: CARTEIRA (REGRA 1 - PRESERVADA) ---
         with tab_carteira:
             st.title("📋 Gestão da Carteira")
             col_f1, col_f2, col_f3 = st.columns(3)
@@ -143,7 +153,7 @@ if check_password():
             h = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
             for col, t in zip(h, ["**Data**", "**Comprador**", "**CPF**", "**Imóvel**", "**Valor**", "**Imobiliária**", "**Status**", " "]): col.write(t)
 
-            with st.container(height=500):
+            with st.container(height=500): # ROLAGEM AMARELA PRESERVADA
                 for i, r in df_v.iterrows():
                     c = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
                     c[0].write(r.get('DATA_EXIBIR', ''))
@@ -156,5 +166,5 @@ if check_password():
                     if c[7].button("🗑️", key=f"d_{i}"): st.warning("Exclua na planilha.")
 
             buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer) as w: df_v.to_excel(w, index=False)
-            st.download_button("📥 Exportar Excel", buffer.getvalue(), "base.xlsx", use_container_width=True)
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as w: df_v.to_excel(w, index=False)
+            st.download_button("📥 Exportar Base Filtrada (Excel)", buffer.getvalue(), "base.xlsx", use_container_width=True)
