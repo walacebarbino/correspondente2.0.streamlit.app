@@ -138,7 +138,7 @@ if not df.empty:
             df_view.to_excel(writer, index=False, sheet_name='Base_Clientes')
         
         st.download_button(
-            label="📥 Exportar Base Filtrada (Excel)",
+            label="📥 Exportar Base de Clientes (Excel)",
             data=buffer.getvalue(),
             file_name=f"base_clientes_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
