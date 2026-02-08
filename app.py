@@ -82,9 +82,8 @@ if check_password():
     if not df.empty:
         # --- ABA 1: BI PROFISSIONAL ---
         with tab_bi:
-            st.title("📊 BI e Performance de Processos") # Título conforme image_f96c49
+            st.title("📊 BI e Performance de Processos")
             
-            # Métricas em formato BR conforme image_f96864
             m1, m2, m3, m4 = st.columns(4)
             total_v = df['Valor'].sum() if 'Valor' in df.columns else 0
             pago = df[df['Status'] == 'Pago']['Valor'].sum() if 'Status' in df.columns else 0
@@ -97,22 +96,20 @@ if check_password():
 
             st.divider()
             
-            # QUADRO HIERÁRQUICO (STATUS + ENQUADRAMENTO) - image_f9772d
+            # QUADRO HIERÁRQUICO COM TÍTULOS LIMPOS
             st.subheader("📑 Resumo Financeiro Detalhado")
             if 'Status' in df.columns and 'Enquadramento' in df.columns:
-                # Criando a estrutura de sub-totais para a tabela
                 df_resumo = df.groupby(['Status', 'Enquadramento'])['Valor'].sum().reset_index()
                 
-                # Montando a visualização em lista para simular a árvore do Excel
                 tabela_dados = []
                 for status in sorted(df_resumo['Status'].unique()):
                     subtotal = df_resumo[df_resumo['Status'] == status]['Valor'].sum()
-                    tabela_dados.append({"Rótulos de Linha": f"[-] {status}", "Soma de Valor (R$)": formatar_br(subtotal)})
+                    tabela_dados.append({"Status / Enquadramento": f"● {status}", "Valor Acumulado": formatar_br(subtotal)})
                     
                     for _, row in df_resumo[df_resumo['Status'] == status].iterrows():
-                        tabela_dados.append({"Rótulos de Linha": f"    {row['Enquadramento']}", "Soma de Valor (R$)": formatar_br(row['Valor'])})
+                        tabela_dados.append({"Status / Enquadramento": f"    ○ {row['Enquadramento']}", "Valor Acumulado": formatar_br(row['Valor'])})
                 
-                tabela_dados.append({"Rótulos de Linha": "**Total Geral**", "Soma de Valor (R$)": f"**{formatar_br(total_v)}**"})
+                tabela_dados.append({"Status / Enquadramento": "**TOTAL GERAL**", "Valor Acumulado": f"**{formatar_br(total_v)}**"})
                 st.table(pd.DataFrame(tabela_dados))
 
             st.divider()
@@ -140,9 +137,10 @@ if check_password():
 
             st.divider()
             h = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
-            for col, t in zip(h, ["**Data**", "**Comprador**", "**CPF**", "**Imóvel**", "**Valor**", "**Imobiliária**", "**Status**", " "]): col.write(t)
+            titulos = ["**Data**", "**Comprador**", "**CPF**", "**Imóvel**", "**Valor**", "**Imobiliária**", "**Status**", " "]
+            for col, t in zip(h, titulos): col.write(t)
 
-            with st.container(height=500): # ROLAGEM AMARELA PRESERVADA conforme image_eee139
+            with st.container(height=500): # ROLAGEM AMARELA
                 for i, r in df_v.iterrows():
                     c = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
                     c[0].write(r.get('DATA_EXIBIR', ''))
@@ -152,10 +150,8 @@ if check_password():
                     c[4].write(formatar_br(r.get('Valor', 0))) 
                     c[5].write(r.get('Imobiliária', ''))
                     c[6].write(r.get('Status', ''))
-                    if c[7].button("🗑️", key=f"d_{i}"): st.warning("Exclua na planilha original.")
+                    if c[7].button("🗑️", key=f"d_{i}"): st.warning("Exclua na planilha.")
 
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as w: df_v.to_excel(w, index=False)
             st.download_button("📥 Exportar Base Filtrada (Excel)", buffer.getvalue(), f"base_{datetime.now().strftime('%d/%m/%Y')}.xlsx", use_container_width=True)
-    else:
-        st.error("Planilha não encontrada.")
