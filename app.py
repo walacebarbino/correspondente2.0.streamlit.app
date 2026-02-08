@@ -23,7 +23,7 @@ def check_password():
                 st.error("😕 Senha incorreta.")
     return False
 
-# Função para formatação brasileira (R$ 1.234,56)
+# Formatação BR (R$ 1.234,56)
 def formatar_br(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
@@ -32,7 +32,7 @@ if check_password():
 
     # --- 2. LOGO E SAIR ---
     try:
-        st.sidebar.image("parceria.JPG", use_container_width=True)
+        st.sidebar.image("parceria.JPG", use_container_width=True) #
     except:
         pass
     if st.sidebar.button("🚪 Sair do Sistema"):
@@ -82,9 +82,8 @@ if check_password():
     if not df.empty:
         # --- ABA 1: BI PROFISSIONAL ---
         with tab_bi:
-            st.title("📊 BI e Performance de Processos") #
+            st.title("📊 BI e Performance de Processos")
             
-            # Métricas no padrão BR
             m1, m2, m3, m4 = st.columns(4)
             total_v = df['Valor'].sum() if 'Valor' in df.columns else 0
             pago = df[df['Status'] == 'Pago']['Valor'].sum() if 'Status' in df.columns else 0
@@ -97,48 +96,30 @@ if check_password():
 
             st.divider()
             
-            # TABELA ESTILIZADA PADRÃO EXCEL
+            # QUADRO ESTILO EXCEL (AZUL E BRANCO) - image_f9d947
             st.subheader("📑 Resumo Financeiro Detalhado")
             if 'Status' in df.columns and 'Enquadramento' in df.columns:
                 df_resumo = df.groupby(['Status', 'Enquadramento'])['Valor'].sum().reset_index()
                 
-                # HTML para construir a tabela idêntica à imagem f9d947
-                html_tabela = """
+                html_code = """
                 <style>
-                    .excel-table { width: 100%; border-collapse: collapse; font-family: Arial; }
-                    .status-row { background-color: #D9E1F2; font-weight: bold; border-bottom: 1px solid #8EA9DB; }
-                    .enquad-row { background-color: white; border-bottom: 1px solid #D9E1F2; }
-                    .total-row { background-color: white; font-weight: bold; border-top: 2px solid #305496; }
-                    .col-text { padding: 8px; text-align: left; }
-                    .col-val { padding: 8px; text-align: right; }
+                    .tab-ex { width: 100%; border-collapse: collapse; font-family: Arial, sans-serif; }
+                    .st-row { background-color: #D9E1F2; font-weight: bold; border: 1px solid #8EA9DB; }
+                    .en-row { background-color: #ffffff; border: 1px solid #D9E1F2; }
+                    .tab-ex td { padding: 10px; border: 1px solid #D9E1F2; }
+                    .val { text-align: right; }
                 </style>
-                <table class="excel-table">
+                <table class='tab-ex'>
                 """
                 
                 for status in sorted(df_resumo['Status'].unique()):
                     subtotal = df_resumo[df_resumo['Status'] == status]['Valor'].sum()
-                    html_tabela += f"""
-                    <tr class="status-row">
-                        <td class="col-text">[-] {status}</td>
-                        <td class="col-val">{formatar_br(subtotal)}</td>
-                    </tr>
-                    """
+                    html_code += f"<tr class='st-row'><td>[-] {status}</td><td class='val'>{formatar_br(subtotal)}</td></tr>"
                     for _, row in df_resumo[df_resumo['Status'] == status].iterrows():
-                        html_tabela += f"""
-                        <tr class="enquad-row">
-                            <td class="col-text" style="padding-left: 30px;">{row['Enquadramento']}</td>
-                            <td class="col-val">{formatar_br(row['Valor'])}</td>
-                        </tr>
-                        """
+                        html_code += f"<tr class='en-row'><td style='padding-left:40px'>{row['Enquadramento']}</td><td class='val'>{formatar_br(row['Valor'])}</td></tr>"
                 
-                html_tabela += f"""
-                <tr class="total-row">
-                    <td class="col-text">Total Geral</td>
-                    <td class="col-val">{formatar_br(total_v)}</td>
-                </tr>
-                </table>
-                """
-                st.markdown(html_tabela, unsafe_allow_html=True)
+                html_code += f"<tr style='background-color:#f0f0f0; font-weight:bold'><td>TOTAL GERAL</td><td class='val'>{formatar_br(total_v)}</td></tr></table>"
+                st.markdown(html_code, unsafe_allow_html=True) # Renderiza a tabela de fato
 
             st.divider()
             c1, c2 = st.columns(2)
@@ -167,7 +148,7 @@ if check_password():
             h = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
             for col, t in zip(h, ["**Data**", "**Comprador**", "**CPF**", "**Imóvel**", "**Valor**", "**Imobiliária**", "**Status**", " "]): col.write(t)
 
-            with st.container(height=500): # ROLAGEM AMARELA PRESERVADA
+            with st.container(height=500): # ROLAGEM AMARELA
                 for i, r in df_v.iterrows():
                     c = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
                     c[0].write(r.get('DATA_EXIBIR', ''))
