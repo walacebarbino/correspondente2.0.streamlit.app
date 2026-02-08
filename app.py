@@ -9,12 +9,16 @@ import requests
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
+
     if st.session_state["password_correct"]:
         return True
+
     st.title("🔐 Login Correspondente 2.0")
+    
     with st.form("login_form"):
         password = st.text_input("Digite a senha para acessar:", type="password")
         submit_button = st.form_submit_button("Entrar")
+        
         if submit_button:
             if password == "1234":
                 st.session_state["password_correct"] = True
@@ -27,12 +31,12 @@ if check_password():
     # --- CONFIGURAÇÕES DE PÁGINA ---
     st.set_page_config(page_title="Gestão Correspondente 2026", layout="wide", page_icon="📊")
 
-    # --- 2. LOGO E BOTÃO DE SAIR ---
+    # --- 2. LOGO E SAIR ---
     try:
         st.sidebar.image("parceria.JPG", use_container_width=True)
     except:
         pass
-    
+
     if st.sidebar.button("🚪 Sair do Sistema"):
         st.session_state["password_correct"] = False
         st.rerun()
@@ -45,24 +49,27 @@ if check_password():
             response = requests.get(LINK_PLANILHA, timeout=20)
             df = pd.read_excel(io.BytesIO(response.content))
             df.columns = [str(c).strip() for c in df.columns]
+            
             mapeamento = {
                 'Nome_do_Comprador': 'Nome do Comprador',
                 'Valor (R$)': 'Valor',
                 'Nome do Imóvel / Construtora': 'Imóvel'
             }
             df = df.rename(columns=mapeamento)
+
             if 'DATA' in df.columns:
                 df['DATA_DT'] = pd.to_datetime(df['DATA'], errors='coerce')
                 df = df.dropna(subset=['DATA_DT'])
                 df['DATA_EXIBIR'] = df['DATA_DT'].dt.strftime('%d/%m/%Y')
                 df['MÊS'] = df['DATA_DT'].dt.strftime('%m/%Y')
+                
             return df
         except:
             return pd.DataFrame()
 
     df = carregar_dados()
 
-    # --- BARRA LATERAL (CADASTRO COMPLETO - REGRA 1) ---
+    # --- BARRA LATERAL (CADASTRO MANTIDO 100% - REGRA 1) ---
     with st.sidebar:
         st.divider()
         st.header("📥 Gestão de Dados")
@@ -76,6 +83,7 @@ if check_password():
             f_imobiliaria = st.text_input("Imobiliária")
             f_enquadramento = st.selectbox("Enquadramento", ["SBPE", "MCMV", "FGTS", "Outros"])
             f_status = st.selectbox("Status", ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"])
+            
             if st.form_submit_button("Cadastrar"):
                 st.info("Dado recebido! Adicione na sua planilha para atualizar.")
 
@@ -83,9 +91,12 @@ if check_password():
     tab_bi, tab_carteira = st.tabs(["📊 Dashboard Profissional", "📋 Carteira de Clientes"])
 
     if not df.empty:
-        # --- ABA 1: BI PROFISSIONAL (COM O NOVO QUADRO) ---
+        # --- ABA 1: BI PROFISSIONAL ---
         with tab_bi:
-            st.title("📊 BI e Performance de Vendas - 2026")
+            # MUDANÇA 1: Título atualizado
+            st.title("📊 BI e Performance de Processos")
+            
+            # Métricas
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Total de Dossiês", f"{len(df)} PACs")
             total_v = df['Valor'].sum() if 'Valor' in df.columns else 0
@@ -95,15 +106,20 @@ if check_password():
             m4.metric("Ticket Médio", f"R$ {(total_v/len(df) if len(df)>0 else 0):,.2f}")
 
             st.divider()
-            
-            # QUADRO DE VALORES/STATUS SOLICITADO
-            st.subheader("📑 Resumo Financeiro por Status")
-            if 'Status' in df.columns and 'Valor' in df.columns:
-                resumo_status = df.groupby('Status')['Valor'].agg(['count', 'sum']).reset_index()
-                resumo_status.columns = ['Status do Processo', 'Qtd', 'Soma de Valor (R$)']
-                st.table(resumo_status.style.format({'Soma de Valor (R$)': 'R$ {:,.2f}'}))
-            
+
+            # MUDANÇA 2: NOVO QUADRO COM ENQUADRAMENTO (Hierárquico)
+            st.subheader("📑 Resumo Financeiro por Status e Enquadramento")
+            if 'Status' in df.columns and 'Valor' in df.columns and 'Enquadramento' in df.columns:
+                # Agrupamento detalhado conforme imagem f95ce3
+                resumo_detalhado = df.groupby(['Status', 'Enquadramento'])['Valor'].sum().reset_index()
+                resumo_detalhado.columns = ['Status do Processo', 'Enquadramento', 'Soma de Valor (R$)']
+                
+                # Exibição em tabela formatada
+                st.table(resumo_detalhado.style.format({'Soma de Valor (R$)': 'R$ {:,.2f}'}))
+                st.markdown(f"**Total Geral: R$ {total_v:,.2f}**")
+
             st.divider()
+
             c1, c2 = st.columns(2)
             with c1:
                 st.subheader("📈 Qtd de PACs por Mês")
@@ -112,10 +128,11 @@ if check_password():
                 st.plotly_chart(fig_lin, use_container_width=True)
             with c2:
                 st.subheader("🎯 Mix Enquadramento")
-                fig_pie = px.pie(df, names='Enquadramento', hole=0.5)
-                st.plotly_chart(fig_pie, use_container_width=True)
+                if 'Enquadramento' in df.columns:
+                    fig_pie = px.pie(df, names='Enquadramento', hole=0.5)
+                    st.plotly_chart(fig_pie, use_container_width=True)
 
-        # --- ABA 2: CARTEIRA DE CLIENTES (MANTIDA 100%) ---
+        # --- ABA 2: CARTEIRA DE CLIENTES (MANTIDA 100% - REGRA 1) ---
         with tab_carteira:
             st.title("📋 Gestão da Carteira")
             
@@ -135,8 +152,10 @@ if check_password():
             if enq_sel != "Todos":
                 df_view = df_view[df_view['Enquadramento'] == enq_sel]
             if busca:
-                df_view = df_view[df_view['Nome do Comprador'].astype(str).str.contains(busca, case=False) | 
-                                 df_view['Imobiliária'].astype(str).str.contains(busca, case=False)]
+                df_view = df_view[
+                    df_view['Nome do Comprador'].astype(str).str.contains(busca, case=False) | 
+                    df_view['Imobiliária'].astype(str).str.contains(busca, case=False)
+                ]
 
             st.divider()
 
@@ -146,7 +165,7 @@ if check_password():
             for col, t in zip(cols_h, titulos):
                 col.write(t)
 
-            # ROLAGEM NA FAIXA AMARELA (MANTIDA)
+            # ROLAGEM NA FAIXA AMARELA (SANTIFICADA)
             container_rolagem = st.container(height=500)
             with container_rolagem:
                 for i, row in df_view.iterrows():
@@ -159,13 +178,14 @@ if check_password():
                     c[5].write(row.get('Imobiliária', '---'))
                     c[6].write(row.get('Status', '---'))
                     if c[7].button("🗑️", key=f"del_{i}"):
-                        st.warning("Remova na planilha para excluir.")
+                        st.warning("Remova a linha no Google Drive para excluir.")
 
-            # EXPORTAR NO FINAL
+            # BOTÃO DE EXPORTAR (FINAL DA PÁGINA)
             st.write("") 
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 df_view.to_excel(writer, index=False, sheet_name='Base_Clientes')
+            
             st.download_button(
                 label="📥 Exportar Base Filtrada (Excel)",
                 data=buffer.getvalue(),
@@ -174,4 +194,4 @@ if check_password():
                 use_container_width=True
             )
     else:
-        st.error("Planilha vazia ou erro de link.")
+        st.error("Planilha não encontrada ou vazia.")
