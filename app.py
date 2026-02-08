@@ -83,11 +83,11 @@ if not df.empty:
                 fig_pie = px.pie(df, names='Enquadramento', hole=0.5)
                 st.plotly_chart(fig_pie, use_container_width=True)
 
-    # --- ABA 2: CARTEIRA DE CLIENTES (COM FILTROS SOLICITADOS) ---
+    # --- ABA 2: CARTEIRA DE CLIENTES ---
     with tab_carteira:
         st.title("📋 Gestão da Carteira")
         
-        # FILTROS DE COLUNA (ADICIONADOS)
+        # Filtros (MANTIDOS)
         filtro_col1, filtro_col2, filtro_col3 = st.columns(3)
         with filtro_col1:
             lista_status = ["Todos"] + sorted(df['Status'].unique().tolist())
@@ -98,7 +98,6 @@ if not df.empty:
         with filtro_col3:
             busca = st.text_input("🔍 Buscar Comprador/Imobiliária")
 
-        # Aplicando a lógica dos filtros
         df_view = df.copy()
         if status_sel != "Todos":
             df_view = df_view[df_view['Status'] == status_sel]
@@ -110,15 +109,28 @@ if not df.empty:
                 df_view['Imobiliária'].astype(str).str.contains(busca, case=False)
             ]
 
-        # Cabeçalho Fixo (Inalterado)
+        # --- BOTÃO DE EXPORTAR (NOVIDADE) ---
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            # Exporta apenas as colunas principais e os dados filtrados
+            df_view.to_excel(writer, index=False, sheet_name='Base_Clientes')
+        
+        st.download_button(
+            label="📥 Exportar Base Filtrada (Excel)",
+            data=buffer.getvalue(),
+            file_name=f"base_clientes_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+        st.divider()
+
+        # Cabeçalho e Rolagem (MANTIDOS - REGRA 1)
         cols_h = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
         titulos = ["**Data**", "**Comprador**", "**CPF**", "**Imóvel**", "**Valor**", "**Imobiliária**", "**Status**", " "]
         for col, t in zip(cols_h, titulos):
             col.write(t)
 
-        # ÁREA DE ROLAGEM (Inalterada - Regra 1)
         container_rolagem = st.container(height=500)
-        
         with container_rolagem:
             for i, row in df_view.iterrows():
                 c = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
