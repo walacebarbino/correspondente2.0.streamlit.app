@@ -5,7 +5,7 @@ from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 import io
 
-# --- 1. FUNÇÃO DE LOGIN (REGRA 1) ---
+# --- 1. LOGIN (REGRA 1) ---
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
@@ -41,13 +41,13 @@ if check_password():
         df['MÊS_ANO'] = df['DATA_DT'].dt.strftime('%m/%Y')
         df.iloc[:, 4] = pd.to_numeric(df.iloc[:, 4], errors='coerce').fillna(0)
 
-    # --- SIDEBAR ---
+    # --- SIDEBAR (LOGO E CADASTRO) ---
     try: st.sidebar.image("parceria.JPG", use_container_width=True)
     except: pass
 
     with st.sidebar:
         st.divider()
-        st.header("📥 Novo Cadastro")
+        st.header("📥 Gestão de Dados")
         with st.form("form_cadastro", clear_on_submit=True):
             f_data = st.date_input("DATA", datetime.now(), format="DD/MM/YYYY")
             f_nome = st.text_input("Nome do Comprador")
@@ -58,7 +58,7 @@ if check_password():
             f_enquadramento = st.selectbox("Enquadramento", ["SBPE", "MCMV", "FGTS", "Outros"])
             f_status = st.selectbox("Status", ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"])
             
-            if st.form_submit_button("Salvar na Planilha"):
+            if st.form_submit_button("Cadastrar na Planilha"):
                 nova_linha = pd.DataFrame([[f_data.strftime("%d/%m/%Y"), f_nome, f_cpf, f_imovel, f_valor, f_imobiliaria, f_enquadramento, f_status]], columns=df.columns[:8])
                 conn.update(spreadsheet=URL_PLANILHA, data=pd.concat([df[df.columns[:8]], nova_linha], ignore_index=True))
                 st.cache_data.clear()
@@ -97,30 +97,31 @@ if check_password():
         with tab_carteira:
             st.title("📋 Gestão da Carteira")
             
-            # --- FILTROS (MANTENDO REGRA 1) ---
             c1, c2, c3 = st.columns(3)
             filtro_nome = c1.text_input("Filtrar por Nome")
             filtro_status = c2.multiselect("Filtrar por Status", options=df.iloc[:, 7].unique())
             filtro_enq = c3.multiselect("Filtrar por Enquadramento", options=df.iloc[:, 6].unique())
 
-            df_filtrado = df.copy()
-            if filtro_nome: df_filtrado = df_filtrado[df_filtrado.iloc[:, 1].str.contains(filtro_nome, case=False)]
-            if filtro_status: df_filtrado = df_filtrado[df_filtrado.iloc[:, 7].isin(filtro_status)]
-            if filtro_enq: df_filtrado = df_filtrado[df_filtrado.iloc[:, 6].isin(filtro_enq)]
+            df_f = df.copy()
+            if filtro_nome: df_f = df_f[df_f.iloc[:, 1].str.contains(filtro_nome, case=False)]
+            if filtro_status: df_f = df_f[df_f.iloc[:, 7].isin(filtro_status)]
+            if filtro_enq: df_f = df_f[df_f.iloc[:, 6].isin(filtro_enq)]
 
-            # --- EXPORTAÇÃO ---
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                df_filtrado[df.columns[:8]].to_excel(writer, index=False, sheet_name='Carteira')
-            st.download_button(label="📥 Exportar Base Filtrada (Excel)", data=buffer, file_name=f"Carteira_{datetime.now().strftime('%d_%m_%Y')}.xlsx", mime="application/vnd.ms-excel")
+            # Exportação Segura (sem travar se o módulo demorar a carregar)
+            try:
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                    df_f[df.columns[:8]].to_excel(writer, index=False)
+                st.download_button("📥 Exportar para Excel", data=buffer, file_name="base_clientes.xlsx", mime="application/vnd.ms-excel")
+            except Exception as e:
+                st.warning("Aguardando inicialização do módulo de exportação... Por favor, clique em 'Reboot' se persistir.")
 
             st.divider()
-            # Cabeçalho e Lista com Rolagem Amarela
             h = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
             for col, t in zip(h, ["**Data**", "**Comprador**", "**CPF**", "**Imóvel**", "**Valor**", "**Imobiliária**", "**Status**", " "]): col.write(t)
 
             with st.container(height=500):
-                for i, r in df_filtrado.iterrows():
+                for i, r in df_f.iterrows():
                     c = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
                     c[0].write(r['DATA_EXIBIR'])
                     c[1].write(r.iloc[1])
