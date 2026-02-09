@@ -33,14 +33,16 @@ if check_password():
     df = conn.read(spreadsheet=URL_PLANILHA, ttl=0).dropna(how="all")
     df.columns = [str(c).strip() for c in df.columns]
 
-    # Tratamento de Datas e Valores para o BI
+    # Tratamento de Datas e Valores
     if not df.empty:
         df['DATA_DT'] = pd.to_datetime(df.iloc[:, 0], dayfirst=True, errors='coerce')
         df['DATA_EXIBIR'] = df['DATA_DT'].dt.strftime('%d/%m/%Y')
-        df['MÊS_ANO'] = df['DATA_DT'].dt.strftime('%Y-%m') # Para ordenação correta
+        # Criando coluna para ordenação cronológica correta nos gráficos
+        df = df.sort_values('DATA_DT')
+        df['MÊS_ANO'] = df['DATA_DT'].dt.strftime('%m/%Y')
         df.iloc[:, 4] = pd.to_numeric(df.iloc[:, 4], errors='coerce').fillna(0)
 
-    # --- SIDEBAR ---
+    # --- SIDEBAR (LOGO E CADASTRO) ---
     try: st.sidebar.image("parceria.JPG", use_container_width=True)
     except: pass
 
@@ -57,7 +59,7 @@ if check_password():
             f_enquadramento = st.selectbox("Enquadramento", ["SBPE", "MCMV", "FGTS", "Outros"])
             f_status = st.selectbox("Status", ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"])
             
-            if st.form_submit_button("Cadastrar"):
+            if st.form_submit_button("Cadastrar na Planilha"):
                 nova_linha = pd.DataFrame([[
                     f_data.strftime("%d/%m/%Y"), f_nome, f_cpf, f_imovel, f_valor, f_imobiliaria, f_enquadramento, f_status
                 ]], columns=df.columns[:8])
@@ -69,7 +71,7 @@ if check_password():
     tab_bi, tab_carteira = st.tabs(["📊 Dashboard Profissional", "📋 Carteira de Clientes"])
 
     if not df.empty:
-        # --- ABA 1: BI COMPLETO ---
+        # --- ABA 1: BI COMPLETO (COM 2 GRÁFICOS) ---
         with tab_bi:
             st.title("📊 BI e Performance")
             m1, m2, m3, m4 = st.columns(4)
@@ -82,31 +84,39 @@ if check_password():
             m3.metric("Total Pago", formatar_br(pago))
             m4.metric("Ticket Médio", formatar_br(ticket))
 
-            col_graf, col_tab = st.columns([1.2, 1])
+            st.divider()
+            
+            # Linha de Gráficos
+            g1, g2 = st.columns(2)
+            
+            with g1:
+                st.subheader("📈 Volume por Enquadramento")
+                fig_enq = px.bar(df, x='MÊS_ANO', y=df.columns[4], color=df.columns[6],
+                                 barmode='group', text_auto='.2s',
+                                 color_discrete_sequence=px.colors.qualitative.Bold)
+                st.plotly_chart(fig_enq, use_container_width=True)
 
-            with col_graf:
-                st.subheader("📈 Volume Mensal por Status")
-                # Gráfico de Barras que estava faltando
-                fig = px.bar(df, x='MÊS_ANO', y=df.columns[4], color=df.columns[7],
-                             title="Evolução de Crédito", barmode='group',
-                             color_discrete_sequence=px.colors.qualitative.Pastel)
-                fig.update_layout(xaxis_title="Mês/Ano", yaxis_title="Valor R$", legend_title="Status")
-                st.plotly_chart(fig, use_container_width=True)
+            with g2:
+                st.subheader("📊 Volume por Status")
+                fig_sta = px.bar(df, x='MÊS_ANO', y=df.columns[4], color=df.columns[7],
+                                 barmode='group', text_auto='.2s',
+                                 color_discrete_sequence=px.colors.qualitative.Pastel)
+                st.plotly_chart(fig_sta, use_container_width=True)
 
-            with col_tab:
-                st.subheader("📑 Resumo Detalhado")
-                df_resumo = df.groupby([df.columns[7], df.columns[6]])[df.columns[4]].sum().reset_index()
-                df_resumo.columns = ['Status', 'Enquadramento', 'Valor']
-                
-                html_code = """<style>.tab-ex{width:100%;border-collapse:collapse;}.st-row{background-color:#D9E1F2;font-weight:bold;}.en-row{background-color:#ffffff;}.tab-ex td{padding:10px;border:1px solid #D9E1F2;}.val{text-align:right;}</style><table class='tab-ex'>"""
-                for status in sorted(df_resumo['Status'].unique()):
-                    sub_v = df_resumo[df_resumo['Status'] == status]['Valor'].sum()
-                    html_code += f"<tr class='st-row'><td>{status}</td><td class='val'>{formatar_br(sub_v)}</td></tr>"
-                    for _, row in df_resumo[df_resumo['Status'] == status].iterrows():
-                        html_code += f"<tr class='en-row'><td style='padding-left:40px'>{row['Enquadramento']}</td><td class='val'>{formatar_br(row['Valor'])}</td></tr>"
-                st.markdown(html_code + "</table>", unsafe_allow_html=True)
+            # Tabela Resumo (REGRA 1)
+            st.subheader("📑 Resumo Detalhado")
+            df_resumo = df.groupby([df.columns[7], df.columns[6]])[df.columns[4]].sum().reset_index()
+            df_resumo.columns = ['Status', 'Enquadramento', 'Valor']
+            
+            html_code = """<style>.tab-ex{width:100%;border-collapse:collapse;}.st-row{background-color:#D9E1F2;font-weight:bold;}.en-row{background-color:#ffffff;}.tab-ex td{padding:10px;border:1px solid #D9E1F2;}.val{text-align:right;}</style><table class='tab-ex'>"""
+            for status in sorted(df_resumo['Status'].unique()):
+                sub_v = df_resumo[df_resumo['Status'] == status]['Valor'].sum()
+                html_code += f"<tr class='st-row'><td>{status}</td><td class='val'>{formatar_br(sub_v)}</td></tr>"
+                for _, row in df_resumo[df_resumo['Status'] == status].iterrows():
+                    html_code += f"<tr class='en-row'><td style='padding-left:40px'>{row['Enquadramento']}</td><td class='val'>{formatar_br(row['Valor'])}</td></tr>"
+            st.markdown(html_code + "</table>", unsafe_allow_html=True)
 
-        # --- ABA 2: CARTEIRA COMPLETA ---
+        # --- ABA 2: CARTEIRA ---
         with tab_carteira:
             st.title("📋 Gestão da Carteira")
             h = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
