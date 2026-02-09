@@ -39,9 +39,9 @@ if check_password():
     df.columns = [str(c).strip() for c in df.columns]
 
     if not df.empty:
-        # CORREÇÃO DA DATA: FORÇANDO DIA PRIMEIRO (DD/MM/AAAA)
+        # FORÇANDO FORMATO BRASILEIRO NA LEITURA (DD/MM/AAAA)
         df['DATA_DT'] = pd.to_datetime(df.iloc[:, 0], dayfirst=True, errors='coerce')
-        df['DATA_DT'] = df['DATA_DT'].fillna(datetime.now())
+        df['DATA_DT'] = df['DATA_DT'].fillna(pd.Timestamp.now().normalize())
         df['DATA_EXIBIR'] = df['DATA_DT'].dt.strftime('%d/%m/%Y')
         df = df.sort_values('DATA_DT', ascending=False)
         df['MÊS_ANO'] = df['DATA_DT'].dt.strftime('%m/%Y')
@@ -78,6 +78,7 @@ if check_password():
 
     if not df.empty:
         with tab_bi:
+            # DASHBOARD ORIGINAL (REGRA 1)
             st.title("📊 BI e Performance")
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Total de Dossiês", f"{len(df)} PACs")
@@ -118,8 +119,9 @@ if check_password():
             for col, t in zip(h, headers): col.write(t)
 
             with st.container(height=500):
-                # DATA ATUAL SEM HORA PARA CÁLCULO PRECISO
-                hoje = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                # DATA DE HOJE PARA REFERÊNCIA
+                hoje = pd.Timestamp.now().normalize()
+                
                 for i, r in df_f.iterrows():
                     c = st.columns([1, 1.5, 1, 1, 1, 1, 1.2, 0.6, 0.4])
                     c[0].write(r['DATA_EXIBIR'])
@@ -129,6 +131,7 @@ if check_password():
                     c[4].write(formatar_br(r.iloc[4]))
                     c[5].write(r.iloc[5])
                     
+                    # EDITAR STATUS
                     lista_st = ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"]
                     idx = lista_st.index(r.iloc[7]) if r.iloc[7] in lista_st else 0
                     novo_s = c[6].selectbox(" ", lista_st, index=idx, key=f"ed_{i}", label_visibility="collapsed")
@@ -138,9 +141,11 @@ if check_password():
                         st.cache_data.clear()
                         st.rerun()
 
-                    # CÁLCULO DE DIAS CORRIGIDO
-                    dias = (hoje - r['DATA_DT'].replace(hour=0, minute=0, second=0, microsecond=0)).days
-                    c[7].write(f"⏱️ {max(0, dias)}d")
+                    # CÁLCULO DE DIAS: HOJE MENOS DATA DE CADASTRO
+                    data_cadastro = r['DATA_DT'].normalize()
+                    # Se a data for futura (erro de digitação), mostra 0, senão calcula a diferença
+                    diff = (hoje - data_cadastro).days
+                    c[7].write(f"⏱️ {max(0, diff)}d")
                     
                     if c[8].button("🗑️", key=f"del_{i}"):
                         conn.update(spreadsheet=URL_PLANILHA, data=df.drop(i)[df.columns[:8]])
