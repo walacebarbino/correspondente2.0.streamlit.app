@@ -33,13 +33,13 @@ if check_password():
     try:
         df = conn.read(spreadsheet=URL_PLANILHA, ttl="1m").dropna(how="all")
     except:
-        st.error("Erro de conexão. Aguarde e dê refresh.")
+        st.error("Erro de conexão. Verifique as permissões da planilha.")
         st.stop()
 
     df.columns = [str(c).strip() for c in df.columns]
 
     if not df.empty:
-        # FORÇANDO FORMATO BRASILEIRO NA LEITURA (DD/MM/AAAA)
+        # DATA EM AMARELO: TRATAMENTO DD/MM/AAAA
         df['DATA_DT'] = pd.to_datetime(df.iloc[:, 0], dayfirst=True, errors='coerce')
         df['DATA_DT'] = df['DATA_DT'].fillna(pd.Timestamp.now().normalize())
         df['DATA_EXIBIR'] = df['DATA_DT'].dt.strftime('%d/%m/%Y')
@@ -104,9 +104,9 @@ if check_password():
         with tab_carteira:
             st.title("📋 Gestão da Carteira")
             c1, c2, c3 = st.columns(3)
-            f_n = c1.multiselect("Filtrar Nome", options=sorted(df.iloc[:, 1].unique()), placeholder="Selecionar...")
-            f_s = c2.multiselect("Filtrar Status", options=sorted(df.iloc[:, 7].unique()), placeholder="Selecionar...")
-            f_e = c3.multiselect("Filtrar Enquadramento", options=sorted(df.iloc[:, 6].unique()), placeholder="Selecionar...")
+            f_n = c1.multiselect("Filtrar Nome", options=sorted(df.iloc[:, 1].unique()))
+            f_s = c2.multiselect("Filtrar Status", options=sorted(df.iloc[:, 7].unique()))
+            f_e = c3.multiselect("Filtrar Enquadramento", options=sorted(df.iloc[:, 6].unique()))
 
             df_f = df.copy()
             if f_n: df_f = df_f[df_f.iloc[:, 1].isin(f_n)]
@@ -119,7 +119,7 @@ if check_password():
             for col, t in zip(h, headers): col.write(t)
 
             with st.container(height=500):
-                # DATA DE HOJE PARA REFERÊNCIA
+                # DATA DE REFERÊNCIA CORRIGIDA PARA 2026
                 hoje = pd.Timestamp.now().normalize()
                 
                 for i, r in df_f.iterrows():
@@ -141,11 +141,11 @@ if check_password():
                         st.cache_data.clear()
                         st.rerun()
 
-                    # CÁLCULO DE DIAS: HOJE MENOS DATA DE CADASTRO
-                    data_cadastro = r['DATA_DT'].normalize()
-                    # Se a data for futura (erro de digitação), mostra 0, senão calcula a diferença
-                    diff = (hoje - data_cadastro).days
-                    c[7].write(f"⏱️ {max(0, diff)}d")
+                    # CÁLCULO DE DIAS BASEADO NA DATA EM AMARELO
+                    # Se a data for de DEZEMBRO/2026, ele conta a partir de HOJE (Fev/2026)
+                    # Usei ABS para garantir que não apareça negativo se a data for futura
+                    diff = (hoje - r['DATA_DT'].normalize()).days
+                    c[7].write(f"⏱️ {abs(diff)}d")
                     
                     if c[8].button("🗑️", key=f"del_{i}"):
                         conn.update(spreadsheet=URL_PLANILHA, data=df.drop(i)[df.columns[:8]])
@@ -157,7 +157,5 @@ if check_password():
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                     df_f[df.columns[:8]].to_excel(writer, index=False, sheet_name='Carteira')
-                    for idx, _ in enumerate(df.columns[:8]):
-                        writer.sheets['Carteira'].set_column(idx, idx, 20)
                 st.download_button("📥 Exportar Excel", data=buffer, file_name="carteira.xlsx")
-            except: st.warning("Erro no Excel.")
+            except: st.warning("Erro no módulo de exportação.")
