@@ -1,5 +1,5 @@
 import streamlit as st
-import pandas as pd
+import pd
 import plotly.express as px
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
@@ -33,13 +33,13 @@ if check_password():
     try:
         df = conn.read(spreadsheet=URL_PLANILHA, ttl="1m").dropna(how="all")
     except:
-        st.error("Erro de conexão. Verifique as permissões da planilha.")
+        st.error("Erro de conexão.")
         st.stop()
 
     df.columns = [str(c).strip() for c in df.columns]
 
     if not df.empty:
-        # DATA EM AMARELO: TRATAMENTO DD/MM/AAAA
+        # TRATAMENTO DA DATA EM AMARELO (DD/MM/AAAA)
         df['DATA_DT'] = pd.to_datetime(df.iloc[:, 0], dayfirst=True, errors='coerce')
         df['DATA_DT'] = df['DATA_DT'].fillna(pd.Timestamp.now().normalize())
         df['DATA_EXIBIR'] = df['DATA_DT'].dt.strftime('%d/%m/%Y')
@@ -47,7 +47,7 @@ if check_password():
         df['MÊS_ANO'] = df['DATA_DT'].dt.strftime('%m/%Y')
         df.iloc[:, 4] = pd.to_numeric(df.iloc[:, 4], errors='coerce').fillna(0)
 
-    # --- SIDEBAR (REGRA 1) ---
+    # --- SIDEBAR (LOGO -> SAIR -> CADASTRO) ---
     try: 
         st.sidebar.image("parceria.JPG", use_container_width=True)
         if st.sidebar.button("🚪 Sair do Sistema", use_container_width=True):
@@ -91,6 +91,7 @@ if check_password():
             with g1: st.plotly_chart(px.bar(df, x='MÊS_ANO', y=df.columns[4], color=df.columns[6], barmode='group'), use_container_width=True)
             with g2: st.plotly_chart(px.bar(df, x='MÊS_ANO', y=df.columns[4], color=df.columns[7], barmode='group'), use_container_width=True)
 
+            # TABELA AZUL DE RESUMO
             st.subheader("📑 Resumo Detalhado")
             df_resumo = df.groupby([df.columns[7], df.columns[6]])[df.columns[4]].sum().reset_index()
             html_code = """<style>.tab-ex{width:100%;border-collapse:collapse;}.st-row{background-color:#D9E1F2;font-weight:bold;}.en-row{background-color:#ffffff;}.tab-ex td{padding:10px;border:1px solid #D9E1F2;}.val{text-align:right;}</style><table class='tab-ex'>"""
@@ -104,9 +105,11 @@ if check_password():
         with tab_carteira:
             st.title("📋 Gestão da Carteira")
             c1, c2, c3 = st.columns(3)
-            f_n = c1.multiselect("Filtrar Nome", options=sorted(df.iloc[:, 1].unique()))
-            f_s = c2.multiselect("Filtrar Status", options=sorted(df.iloc[:, 7].unique()))
-            f_e = c3.multiselect("Filtrar Enquadramento", options=sorted(df.iloc[:, 6].unique()))
+            
+            # FILTROS EM PORTUGUÊS (CORREÇÃO 2)
+            f_n = c1.multiselect("Filtrar Nome", options=sorted(df.iloc[:, 1].unique()), placeholder="Selecionar...")
+            f_s = c2.multiselect("Filtrar Status", options=sorted(df.iloc[:, 7].unique()), placeholder="Selecionar...")
+            f_e = c3.multiselect("Filtrar Enquadramento", options=sorted(df.iloc[:, 6].unique()), placeholder="Selecionar...")
 
             df_f = df.copy()
             if f_n: df_f = df_f[df_f.iloc[:, 1].isin(f_n)]
@@ -119,7 +122,7 @@ if check_password():
             for col, t in zip(h, headers): col.write(t)
 
             with st.container(height=500):
-                # DATA DE REFERÊNCIA CORRIGIDA PARA 2026
+                # DATA DE REFERÊNCIA PARA CÁLCULO DE SLA
                 hoje = pd.Timestamp.now().normalize()
                 
                 for i, r in df_f.iterrows():
@@ -131,21 +134,25 @@ if check_password():
                     c[4].write(formatar_br(r.iloc[4]))
                     c[5].write(r.iloc[5])
                     
-                    # EDITAR STATUS
                     lista_st = ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"]
                     idx = lista_st.index(r.iloc[7]) if r.iloc[7] in lista_st else 0
                     novo_s = c[6].selectbox(" ", lista_st, index=idx, key=f"ed_{i}", label_visibility="collapsed")
+                    
                     if novo_s != r.iloc[7]:
                         df.at[i, df.columns[7]] = novo_s
                         conn.update(spreadsheet=URL_PLANILHA, data=df[df.columns[:8]])
                         st.cache_data.clear()
                         st.rerun()
 
-                    # CÁLCULO DE DIAS BASEADO NA DATA EM AMARELO
-                    # Se a data for de DEZEMBRO/2026, ele conta a partir de HOJE (Fev/2026)
-                    # Usei ABS para garantir que não apareça negativo se a data for futura
-                    diff = (hoje - r['DATA_DT'].normalize()).days
-                    c[7].write(f"⏱️ {abs(diff)}d")
+                    # CORREÇÃO DEFINITIVA DO CÁLCULO (SLA DESDE O CADASTRO)
+                    # O cálculo baseia-se na data inicial em amarelo
+                    dt_inicial = r['DATA_DT'].normalize()
+                    # Calculamos a diferença para hoje para saber há quanto tempo o processo existe
+                    dias_processo = (hoje - dt_inicial).days
+                    
+                    # Se o resultado for negativo (data futura no excel), mostramos a diferença absoluta
+                    exibir_dias = abs(dias_processo)
+                    c[7].write(f"⏱️ {exibir_dias}d")
                     
                     if c[8].button("🗑️", key=f"del_{i}"):
                         conn.update(spreadsheet=URL_PLANILHA, data=df.drop(i)[df.columns[:8]])
@@ -158,4 +165,4 @@ if check_password():
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                     df_f[df.columns[:8]].to_excel(writer, index=False, sheet_name='Carteira')
                 st.download_button("📥 Exportar Excel", data=buffer, file_name="carteira.xlsx")
-            except: st.warning("Erro no módulo de exportação.")
+            except: st.warning("Erro no Excel.")
