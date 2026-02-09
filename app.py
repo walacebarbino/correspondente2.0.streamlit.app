@@ -5,7 +5,7 @@ from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 import io
 
-# --- 1. LOGIN E LOGOUT ---
+# --- 1. LOGIN E LOGOUT (REGRA 1) ---
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
@@ -39,20 +39,14 @@ if check_password():
     df.columns = [str(c).strip() for c in df.columns]
 
     if not df.empty:
-        # ✅ BLINDAGEM DA DATA (CONFORME SUA SUGESTÃO)
-        df['DATA_DT'] = pd.to_datetime(df.iloc[:, 0].astype(str).str.strip(), 
-                                       dayfirst=True, errors='coerce')
-        
-        # Aviso se houver datas que o pandas não conseguiu entender
-        if df['DATA_DT'].isna().any():
-            st.warning("Atenção: Existem datas em formato inválido na planilha (use DD/MM/AAAA).")
-
+        # ✅ SUA CORREÇÃO DE DATA: SEM FILLNA, SEM MÁSCARA
+        df['DATA_DT'] = pd.to_datetime(df.iloc[:, 0].astype(str).str.strip(), dayfirst=True, errors='coerce')
         df['DATA_EXIBIR'] = df['DATA_DT'].dt.strftime('%d/%m/%Y')
         df = df.sort_values('DATA_DT', ascending=False)
         df['MÊS_ANO'] = df['DATA_DT'].dt.strftime('%m/%Y')
         df.iloc[:, 4] = pd.to_numeric(df.iloc[:, 4], errors='coerce').fillna(0)
 
-    # --- SIDEBAR ---
+    # --- SIDEBAR (REGRA 1) ---
     try: 
         st.sidebar.image("parceria.JPG", use_container_width=True)
         if st.sidebar.button("🚪 Sair do Sistema", use_container_width=True):
@@ -95,6 +89,17 @@ if check_password():
             with g1: st.plotly_chart(px.bar(df, x='MÊS_ANO', y=df.columns[4], color=df.columns[6], barmode='group'), use_container_width=True)
             with g2: st.plotly_chart(px.bar(df, x='MÊS_ANO', y=df.columns[4], color=df.columns[7], barmode='group'), use_container_width=True)
 
+            # --- RESTAURADO: TABELA AZUL DE RESUMO (REGRA 1) ---
+            st.subheader("📑 Resumo Detalhado")
+            df_resumo = df.groupby([df.columns[7], df.columns[6]])[df.columns[4]].sum().reset_index()
+            html_code = """<style>.tab-ex{width:100%;border-collapse:collapse;}.st-row{background-color:#D9E1F2;font-weight:bold;}.en-row{background-color:#ffffff;}.tab-ex td{padding:10px;border:1px solid #D9E1F2;}.val{text-align:right;}</style><table class='tab-ex'>"""
+            for status in sorted(df_resumo.iloc[:,0].unique()):
+                sub_v = df_resumo[df_resumo.iloc[:,0] == status].iloc[:,2].sum()
+                html_code += f"<tr class='st-row'><td>{status}</td><td class='val'>{formatar_br(sub_v)}</td></tr>"
+                for _, row in df_resumo[df_resumo.iloc[:,0] == status].iterrows():
+                    html_code += f"<tr class='en-row'><td style='padding-left:40px'>{row.iloc[1]}</td><td class='val'>{formatar_br(row.iloc[2])}</td></tr>"
+            st.markdown(html_code + "</table>", unsafe_allow_html=True)
+
         with tab_carteira:
             st.title("📋 Gestão da Carteira")
             c1, c2, c3 = st.columns(3)
@@ -113,12 +118,12 @@ if check_password():
             for col, t in zip(h, headers): col.write(t)
 
             with st.container(height=500):
-                # ✅ DATA ATUAL REAL (CONFORME SUA SUGESTÃO)
+                # ✅ SUA CORREÇÃO: DATA ATUAL REAL
                 hoje = pd.Timestamp.today().normalize()
                 
                 for i, r in df_f.iterrows():
                     c = st.columns([1, 1.5, 1, 1, 1, 1, 1.2, 0.6, 0.4])
-                    c[0].write(r['DATA_EXIBIR'] if pd.notna(r['DATA_DT']) else "Erro Data")
+                    c[0].write(r['DATA_EXIBIR'] if pd.notna(r['DATA_DT']) else "Data Inválida")
                     c[1].write(r.iloc[1])
                     c[2].write(r.iloc[2])
                     c[3].write(r.iloc[3])
@@ -135,10 +140,9 @@ if check_password():
                         st.cache_data.clear()
                         st.rerun()
 
-                    # ✅ CÁLCULO FINAL (CONFORME SUA SUGESTÃO)
+                    # ✅ SUA CORREÇÃO: CÁLCULO DIRETO
                     if pd.notna(r['DATA_DT']):
-                        dt_cadastro = r['DATA_DT'].normalize()
-                        total_dias = (hoje - dt_cadastro).days
+                        total_dias = (hoje - r['DATA_DT'].normalize()).days
                         c[7].write(f"⏱️ {total_dias}d")
                     else:
                         c[7].write("⏱️ --")
