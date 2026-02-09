@@ -39,7 +39,7 @@ if check_password():
     df.columns = [str(c).strip() for c in df.columns]
 
     if not df.empty:
-        # ✅ SUA CORREÇÃO DE DATA: SEM FILLNA, SEM MÁSCARA
+        # ✅ SUA CORREÇÃO DE DATA
         df['DATA_DT'] = pd.to_datetime(df.iloc[:, 0].astype(str).str.strip(), dayfirst=True, errors='coerce')
         df['DATA_EXIBIR'] = df['DATA_DT'].dt.strftime('%d/%m/%Y')
         df = df.sort_values('DATA_DT', ascending=False)
@@ -89,7 +89,7 @@ if check_password():
             with g1: st.plotly_chart(px.bar(df, x='MÊS_ANO', y=df.columns[4], color=df.columns[6], barmode='group'), use_container_width=True)
             with g2: st.plotly_chart(px.bar(df, x='MÊS_ANO', y=df.columns[4], color=df.columns[7], barmode='group'), use_container_width=True)
 
-            # --- RESTAURADO: TABELA AZUL DE RESUMO (REGRA 1) ---
+            # --- TABELA DE RESUMO RESTAURADA ---
             st.subheader("📑 Resumo Detalhado")
             df_resumo = df.groupby([df.columns[7], df.columns[6]])[df.columns[4]].sum().reset_index()
             html_code = """<style>.tab-ex{width:100%;border-collapse:collapse;}.st-row{background-color:#D9E1F2;font-weight:bold;}.en-row{background-color:#ffffff;}.tab-ex td{padding:10px;border:1px solid #D9E1F2;}.val{text-align:right;}</style><table class='tab-ex'>"""
@@ -118,7 +118,7 @@ if check_password():
             for col, t in zip(h, headers): col.write(t)
 
             with st.container(height=500):
-                # ✅ SUA CORREÇÃO: DATA ATUAL REAL
+                # ✅ DATA ATUAL REAL
                 hoje = pd.Timestamp.today().normalize()
                 
                 for i, r in df_f.iterrows():
@@ -140,7 +140,7 @@ if check_password():
                         st.cache_data.clear()
                         st.rerun()
 
-                    # ✅ SUA CORREÇÃO: CÁLCULO DIRETO
+                    # ✅ CÁLCULO DIRETO SEM ABS
                     if pd.notna(r['DATA_DT']):
                         total_dias = (hoje - r['DATA_DT'].normalize()).days
                         c[7].write(f"⏱️ {total_dias}d")
@@ -151,3 +151,18 @@ if check_password():
                         conn.update(spreadsheet=URL_PLANILHA, data=df.drop(i)[df.columns[:8]])
                         st.cache_data.clear()
                         st.rerun()
+
+            # --- ✅ BOTÃO DE EXPORTAR PLANILHA ---
+            st.divider()
+            try:
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                    df_f[df.columns[:8]].to_excel(writer, index=False, sheet_name='Carteira')
+                st.download_button(
+                    label="📥 Exportar para Excel",
+                    data=buffer.getvalue(),
+                    file_name=f"carteira_clientes_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            except:
+                st.warning("Erro ao gerar arquivo para exportação.")
