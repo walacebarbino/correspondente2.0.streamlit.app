@@ -31,7 +31,13 @@ if check_password():
     conn = st.connection("gsheets", type=GSheetsConnection)
     URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1n6529TSBqYhwqAq-ZwVleV0b9q0p38PSPT4eU1z-uNc/edit"
 
-    df = conn.read(spreadsheet=URL_PLANILHA, ttl=0).dropna(how="all")
+    # Tentativa de leitura com tratamento de erro
+    try:
+        df = conn.read(spreadsheet=URL_PLANILHA, ttl="1m").dropna(how="all")
+    except Exception as e:
+        st.error("Erro de conexão com o Google Sheets. Aguarde 30 segundos e dê um refresh.")
+        st.stop()
+
     df.columns = [str(c).strip() for c in df.columns]
 
     if not df.empty:
@@ -42,7 +48,7 @@ if check_password():
         df['MÊS_ANO'] = df['DATA_DT'].dt.strftime('%m/%Y')
         df.iloc[:, 4] = pd.to_numeric(df.iloc[:, 4], errors='coerce').fillna(0)
 
-    # --- SIDEBAR ---
+    # --- SIDEBAR (REGRA 1: LOGO -> SAIR -> CADASTRO) ---
     try: 
         st.sidebar.image("parceria.JPG", use_container_width=True)
         if st.sidebar.button("🚪 Sair do Sistema", use_container_width=True):
@@ -72,7 +78,7 @@ if check_password():
     tab_bi, tab_carteira = st.tabs(["📊 Dashboard Profissional", "📋 Carteira de Clientes"])
 
     if not df.empty:
-        # --- ABA 1: BI ORIGINAL (RESTAURADO - REGRA 1) ---
+        # --- ABA 1: BI (REGRA 1 RESTAURADA) ---
         with tab_bi:
             st.title("📊 BI e Performance")
             m1, m2, m3, m4 = st.columns(4)
@@ -90,8 +96,7 @@ if check_password():
                 st.subheader("📊 Volume por Status")
                 st.plotly_chart(px.bar(df, x='MÊS_ANO', y=df.columns[4], color=df.columns[7], barmode='group'), use_container_width=True)
 
-            # A TABELA AZUL QUE EU TINHA REMOVIDO POR ERRO:
-            st.subheader("📑 Resumo Detalhado (Excel Style)")
+            st.subheader("📑 Resumo Detalhado")
             df_resumo = df.groupby([df.columns[7], df.columns[6]])[df.columns[4]].sum().reset_index()
             html_code = """<style>.tab-ex{width:100%;border-collapse:collapse;}.st-row{background-color:#D9E1F2;font-weight:bold;}.en-row{background-color:#ffffff;}.tab-ex td{padding:10px;border:1px solid #D9E1F2;}.val{text-align:right;}</style><table class='tab-ex'>"""
             for status in sorted(df_resumo.iloc[:,0].unique()):
@@ -101,7 +106,7 @@ if check_password():
                     html_code += f"<tr class='en-row'><td style='padding-left:40px'>{row.iloc[1]}</td><td class='val'>{formatar_br(row.iloc[2])}</td></tr>"
             st.markdown(html_code + "</table>", unsafe_allow_html=True)
 
-        # --- ABA 2: CARTEIRA (COM EDITAR STATUS E DIAS) ---
+        # --- ABA 2: CARTEIRA (DIAS E EDITAR STATUS) ---
         with tab_carteira:
             st.title("📋 Gestão da Carteira")
             c1, c2, c3 = st.columns(3)
@@ -116,7 +121,8 @@ if check_password():
 
             st.divider()
             h = st.columns([1, 1.5, 1, 1, 1, 1, 1.2, 0.6, 0.4])
-            for col, t in zip(h, ["**Data**", "**Comprador**", "**CPF**", "**Imóvel**", "**Valor**", "**Imobiliária**", "**Status**", "**Dias**", " "]): col.write(t)
+            headers = ["**Data**", "**Comprador**", "**CPF**", "**Imóvel**", "**Valor**", "**Imobiliária**", "**Status**", "**Dias**", " "]
+            for col, t in zip(h, headers): col.write(t)
 
             with st.container(height=500):
                 for i, r in df_f.iterrows():
@@ -128,28 +134,32 @@ if check_password():
                     c[4].write(formatar_br(r.iloc[4]))
                     c[5].write(r.iloc[5])
                     
-                    lista_status = ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"]
-                    idx_atual = lista_status.index(r.iloc[7]) if r.iloc[7] in lista_status else 0
-                    novo_s = c[6].selectbox(" ", lista_status, index=idx_atual, key=f"edit_{i}", label_visibility="collapsed")
+                    # EDITAR STATUS
+                    lista_st = ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"]
+                    idx = lista_st.index(r.iloc[7]) if r.iloc[7] in lista_st else 0
+                    novo_s = c[6].selectbox(" ", lista_st, index=idx, key=f"ed_{i}", label_visibility="collapsed")
                     if novo_s != r.iloc[7]:
                         df.at[i, df.columns[7]] = novo_s
                         conn.update(spreadsheet=URL_PLANILHA, data=df[df.columns[:8]])
                         st.cache_data.clear()
                         st.rerun()
 
+                    # DIAS DE PROCESSO
                     dias = (datetime.now() - r['DATA_DT']).days
                     c[7].write(f"⏱️ {dias}d")
+                    
                     if c[8].button("🗑️", key=f"del_{i}"):
                         conn.update(spreadsheet=URL_PLANILHA, data=df.drop(i)[df.columns[:8]])
                         st.cache_data.clear()
                         st.rerun()
             
+            # EXPORTAÇÃO NO FINAL
             st.divider()
             try:
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                     df_f[df.columns[:8]].to_excel(writer, index=False, sheet_name='Carteira')
-                    for idx, col in enumerate(df_f[df.columns[:8]].columns):
+                    for idx, _ in enumerate(df.columns[:8]):
                         writer.sheets['Carteira'].set_column(idx, idx, 20)
-                st.download_button("📥 Exportar Excel", data=buffer, file_name="base.xlsx")
-            except: st.warning("Erro no módulo de exportação.")
+                st.download_button("📥 Exportar Excel", data=buffer, file_name="carteira.xlsx")
+            except: st.warning("Erro no Excel. Verifique requirements.txt")
