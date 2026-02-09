@@ -5,11 +5,18 @@ from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 import io
 
-# --- 1. LOGIN (REGRA 1) ---
+# --- 1. FUNÇÃO DE LOGIN E LOGOUT (REGRA 1 - RESTAURADA) ---
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
-    if st.session_state["password_correct"]: return True
+    
+    if st.session_state["password_correct"]:
+        # Botão de Sair na Sidebar
+        if st.sidebar.button("🚪 Sair do Sistema"):
+            st.session_state["password_correct"] = False
+            st.rerun()
+        return True
+
     st.title("🔐 Login Correspondente 2.0")
     with st.form("login_form"):
         password = st.text_input("Digite a senha:", type="password")
@@ -126,12 +133,18 @@ if check_password():
                         st.cache_data.clear()
                         st.rerun()
             
-            # --- BOTÃO DE EXPORTAÇÃO NO FINAL DA LISTA (PEDIDO) ---
+            # --- EXPORTAÇÃO COM AJUSTE DE COLUNAS ---
             st.divider()
             try:
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                    df_f[df.columns[:8]].to_excel(writer, index=False)
-                st.download_button("📥 Exportar Carteira Filtrada para Excel", data=buffer, file_name="base_clientes.xlsx", mime="application/vnd.ms-excel")
+                    df_to_export = df_f[df.columns[:8]]
+                    df_to_export.to_excel(writer, index=False, sheet_name='Carteira')
+                    worksheet = writer.sheets['Carteira']
+                    # Loop para ajustar largura das colunas automaticamente
+                    for idx, col in enumerate(df_to_export.columns):
+                        max_len = max(df_to_export[col].astype(str).map(len).max(), len(col)) + 2
+                        worksheet.set_column(idx, idx, max_len)
+                st.download_button("📥 Exportar Carteira Filtrada (Excel)", data=buffer, file_name="base_clientes.xlsx", mime="application/vnd.ms-excel")
             except Exception:
-                st.warning("Aguardando inicialização do módulo de exportação... Por favor, clique em 'Reboot' no menu Manage App.")
+                st.warning("Aguardando módulo de exportação... Clique em 'Reboot' se o erro persistir.")
