@@ -5,16 +5,12 @@ from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 import io
 
-# --- 1. FUNÇÃO DE LOGIN E LOGOUT (REGRA 1 - RESTAURADA) ---
+# --- 1. FUNÇÃO DE LOGIN E LOGOUT (REGRA 1) ---
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
     
     if st.session_state["password_correct"]:
-        # Botão de Sair na Sidebar
-        if st.sidebar.button("🚪 Sair do Sistema"):
-            st.session_state["password_correct"] = False
-            st.rerun()
         return True
 
     st.title("🔐 Login Correspondente 2.0")
@@ -48,8 +44,13 @@ if check_password():
         df['MÊS_ANO'] = df['DATA_DT'].dt.strftime('%m/%Y')
         df.iloc[:, 4] = pd.to_numeric(df.iloc[:, 4], errors='coerce').fillna(0)
 
-    # --- SIDEBAR (LOGO E CADASTRO) ---
-    try: st.sidebar.image("parceria.JPG", use_container_width=True)
+    # --- SIDEBAR (LOGO, BOTÃO SAIR E CADASTRO) ---
+    try: 
+        st.sidebar.image("parceria.JPG", use_container_width=True)
+        # BOTÃO SAIR ABAIXO DA LOGO (PEDIDO 3)
+        if st.sidebar.button("🚪 Sair do Sistema", use_container_width=True):
+            st.session_state["password_correct"] = False
+            st.rerun()
     except: pass
 
     with st.sidebar:
@@ -104,13 +105,14 @@ if check_password():
         with tab_carteira:
             st.title("📋 Gestão da Carteira")
             
+            # FILTROS PADRONIZADOS E EM PORTUGUÊS (PEDIDOS 1 E 2)
             c1, c2, c3 = st.columns(3)
-            filtro_nome = c1.text_input("Filtrar por Nome")
-            filtro_status = c2.multiselect("Filtrar por Status", options=df.iloc[:, 7].unique())
-            filtro_enq = c3.multiselect("Filtrar por Enquadramento", options=df.iloc[:, 6].unique())
+            filtro_nome = c1.multiselect("Filtrar por Nome", options=sorted(df.iloc[:, 1].unique()), placeholder="Selecionar nomes...")
+            filtro_status = c2.multiselect("Filtrar por Status", options=sorted(df.iloc[:, 7].unique()), placeholder="Selecionar status...")
+            filtro_enq = c3.multiselect("Filtrar por Enquadramento", options=sorted(df.iloc[:, 6].unique()), placeholder="Selecionar enquadramento...")
 
             df_f = df.copy()
-            if filtro_nome: df_f = df_f[df_f.iloc[:, 1].str.contains(filtro_nome, case=False)]
+            if filtro_nome: df_f = df_f[df_f.iloc[:, 1].isin(filtro_nome)]
             if filtro_status: df_f = df_f[df_f.iloc[:, 7].isin(filtro_status)]
             if filtro_enq: df_f = df_f[df_f.iloc[:, 6].isin(filtro_enq)]
 
@@ -133,18 +135,17 @@ if check_password():
                         st.cache_data.clear()
                         st.rerun()
             
-            # --- EXPORTAÇÃO COM AJUSTE DE COLUNAS ---
+            # EXPORTAÇÃO COM AJUSTE DE COLUNAS
             st.divider()
             try:
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                    df_to_export = df_f[df.columns[:8]]
-                    df_to_export.to_excel(writer, index=False, sheet_name='Carteira')
+                    df_exp = df_f[df.columns[:8]]
+                    df_exp.to_excel(writer, index=False, sheet_name='Carteira')
                     worksheet = writer.sheets['Carteira']
-                    # Loop para ajustar largura das colunas automaticamente
-                    for idx, col in enumerate(df_to_export.columns):
-                        max_len = max(df_to_export[col].astype(str).map(len).max(), len(col)) + 2
+                    for idx, col in enumerate(df_exp.columns):
+                        max_len = max(df_exp[col].astype(str).map(len).max(), len(col)) + 2
                         worksheet.set_column(idx, idx, max_len)
                 st.download_button("📥 Exportar Carteira Filtrada (Excel)", data=buffer, file_name="base_clientes.xlsx", mime="application/vnd.ms-excel")
             except Exception:
-                st.warning("Aguardando módulo de exportação... Clique em 'Reboot' se o erro persistir.")
+                st.warning("Verifique se 'xlsxwriter' está no requirements.txt e dê 'Reboot' no app.")
