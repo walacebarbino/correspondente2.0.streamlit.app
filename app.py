@@ -27,20 +27,19 @@ def formatar_br(valor):
 if check_password():
     st.set_page_config(page_title="Gestão Correspondente 2026", layout="wide", page_icon="📊")
 
-    # --- 2. CONEXÃO ---
     conn = st.connection("gsheets", type=GSheetsConnection)
     URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1n6529TSBqYhwqAq-ZwVleV0b9q0p38PSPT4eU1z-uNc/edit"
 
-    # Tentativa de leitura com tratamento de erro
     try:
         df = conn.read(spreadsheet=URL_PLANILHA, ttl="1m").dropna(how="all")
-    except Exception as e:
-        st.error("Erro de conexão com o Google Sheets. Aguarde 30 segundos e dê um refresh.")
+    except:
+        st.error("Erro de conexão. Aguarde e dê refresh.")
         st.stop()
 
     df.columns = [str(c).strip() for c in df.columns]
 
     if not df.empty:
+        # CORREÇÃO DA DATA: FORÇANDO DIA PRIMEIRO (DD/MM/AAAA)
         df['DATA_DT'] = pd.to_datetime(df.iloc[:, 0], dayfirst=True, errors='coerce')
         df['DATA_DT'] = df['DATA_DT'].fillna(datetime.now())
         df['DATA_EXIBIR'] = df['DATA_DT'].dt.strftime('%d/%m/%Y')
@@ -48,7 +47,7 @@ if check_password():
         df['MÊS_ANO'] = df['DATA_DT'].dt.strftime('%m/%Y')
         df.iloc[:, 4] = pd.to_numeric(df.iloc[:, 4], errors='coerce').fillna(0)
 
-    # --- SIDEBAR (REGRA 1: LOGO -> SAIR -> CADASTRO) ---
+    # --- SIDEBAR (REGRA 1) ---
     try: 
         st.sidebar.image("parceria.JPG", use_container_width=True)
         if st.sidebar.button("🚪 Sair do Sistema", use_container_width=True):
@@ -78,7 +77,6 @@ if check_password():
     tab_bi, tab_carteira = st.tabs(["📊 Dashboard Profissional", "📋 Carteira de Clientes"])
 
     if not df.empty:
-        # --- ABA 1: BI (REGRA 1 RESTAURADA) ---
         with tab_bi:
             st.title("📊 BI e Performance")
             m1, m2, m3, m4 = st.columns(4)
@@ -89,12 +87,8 @@ if check_password():
 
             st.divider()
             g1, g2 = st.columns(2)
-            with g1:
-                st.subheader("📈 Volume por Enquadramento")
-                st.plotly_chart(px.bar(df, x='MÊS_ANO', y=df.columns[4], color=df.columns[6], barmode='group'), use_container_width=True)
-            with g2:
-                st.subheader("📊 Volume por Status")
-                st.plotly_chart(px.bar(df, x='MÊS_ANO', y=df.columns[4], color=df.columns[7], barmode='group'), use_container_width=True)
+            with g1: st.plotly_chart(px.bar(df, x='MÊS_ANO', y=df.columns[4], color=df.columns[6], barmode='group'), use_container_width=True)
+            with g2: st.plotly_chart(px.bar(df, x='MÊS_ANO', y=df.columns[4], color=df.columns[7], barmode='group'), use_container_width=True)
 
             st.subheader("📑 Resumo Detalhado")
             df_resumo = df.groupby([df.columns[7], df.columns[6]])[df.columns[4]].sum().reset_index()
@@ -106,7 +100,6 @@ if check_password():
                     html_code += f"<tr class='en-row'><td style='padding-left:40px'>{row.iloc[1]}</td><td class='val'>{formatar_br(row.iloc[2])}</td></tr>"
             st.markdown(html_code + "</table>", unsafe_allow_html=True)
 
-        # --- ABA 2: CARTEIRA (DIAS E EDITAR STATUS) ---
         with tab_carteira:
             st.title("📋 Gestão da Carteira")
             c1, c2, c3 = st.columns(3)
@@ -125,6 +118,8 @@ if check_password():
             for col, t in zip(h, headers): col.write(t)
 
             with st.container(height=500):
+                # DATA ATUAL SEM HORA PARA CÁLCULO PRECISO
+                hoje = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
                 for i, r in df_f.iterrows():
                     c = st.columns([1, 1.5, 1, 1, 1, 1, 1.2, 0.6, 0.4])
                     c[0].write(r['DATA_EXIBIR'])
@@ -134,7 +129,6 @@ if check_password():
                     c[4].write(formatar_br(r.iloc[4]))
                     c[5].write(r.iloc[5])
                     
-                    # EDITAR STATUS
                     lista_st = ["Triagem", "Análise Manual", "Montagem PAC", "Inconformidade", "Aprovado", "Pago"]
                     idx = lista_st.index(r.iloc[7]) if r.iloc[7] in lista_st else 0
                     novo_s = c[6].selectbox(" ", lista_st, index=idx, key=f"ed_{i}", label_visibility="collapsed")
@@ -144,16 +138,15 @@ if check_password():
                         st.cache_data.clear()
                         st.rerun()
 
-                    # DIAS DE PROCESSO
-                    dias = (datetime.now() - r['DATA_DT']).days
-                    c[7].write(f"⏱️ {dias}d")
+                    # CÁLCULO DE DIAS CORRIGIDO
+                    dias = (hoje - r['DATA_DT'].replace(hour=0, minute=0, second=0, microsecond=0)).days
+                    c[7].write(f"⏱️ {max(0, dias)}d")
                     
                     if c[8].button("🗑️", key=f"del_{i}"):
                         conn.update(spreadsheet=URL_PLANILHA, data=df.drop(i)[df.columns[:8]])
                         st.cache_data.clear()
                         st.rerun()
             
-            # EXPORTAÇÃO NO FINAL
             st.divider()
             try:
                 buffer = io.BytesIO()
@@ -162,4 +155,4 @@ if check_password():
                     for idx, _ in enumerate(df.columns[:8]):
                         writer.sheets['Carteira'].set_column(idx, idx, 20)
                 st.download_button("📥 Exportar Excel", data=buffer, file_name="carteira.xlsx")
-            except: st.warning("Erro no Excel. Verifique requirements.txt")
+            except: st.warning("Erro no Excel.")
