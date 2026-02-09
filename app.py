@@ -14,7 +14,7 @@ def check_password():
     with st.form("login_form"):
         password = st.text_input("Digite a senha:", type="password")
         if st.form_submit_button("Entrar"):
-            if password == "1234":
+            if password == "2083":
                 st.session_state["password_correct"] = True
                 st.rerun()
             else: st.error("😕 Senha incorreta.")
