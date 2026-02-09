@@ -107,15 +107,6 @@ if check_password():
             if filtro_status: df_f = df_f[df_f.iloc[:, 7].isin(filtro_status)]
             if filtro_enq: df_f = df_f[df_f.iloc[:, 6].isin(filtro_enq)]
 
-            # Exportação Segura (sem travar se o módulo demorar a carregar)
-            try:
-                buffer = io.BytesIO()
-                with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                    df_f[df.columns[:8]].to_excel(writer, index=False)
-                st.download_button("📥 Exportar para Excel", data=buffer, file_name="base_clientes.xlsx", mime="application/vnd.ms-excel")
-            except Exception as e:
-                st.warning("Aguardando inicialização do módulo de exportação... Por favor, clique em 'Reboot' se persistir.")
-
             st.divider()
             h = st.columns([1, 1.5, 1, 1, 1, 1, 1, 0.5])
             for col, t in zip(h, ["**Data**", "**Comprador**", "**CPF**", "**Imóvel**", "**Valor**", "**Imobiliária**", "**Status**", " "]): col.write(t)
@@ -134,3 +125,13 @@ if check_password():
                         conn.update(spreadsheet=URL_PLANILHA, data=df.drop(i)[df.columns[:8]])
                         st.cache_data.clear()
                         st.rerun()
+            
+            # --- BOTÃO DE EXPORTAÇÃO NO FINAL DA LISTA (PEDIDO) ---
+            st.divider()
+            try:
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                    df_f[df.columns[:8]].to_excel(writer, index=False)
+                st.download_button("📥 Exportar Carteira Filtrada para Excel", data=buffer, file_name="base_clientes.xlsx", mime="application/vnd.ms-excel")
+            except Exception:
+                st.warning("Aguardando inicialização do módulo de exportação... Por favor, clique em 'Reboot' no menu Manage App.")
